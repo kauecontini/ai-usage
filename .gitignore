@@ -1,0 +1,46 @@
+# Node
+node_modules/
+dist/
+.vite/
+coverage/
+
+# Rust / Tauri
+src-tauri/target/
+target/
+
+# Generated installers / bundles
+*.msi
+*.exe
+*.appx
+*.msix
+*.dmg
+*.AppImage
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*auth*.json
+*credentials*.json
+*session*.json
+
+# Usage local state
+.usage/
+logs/
+cache.json
+settings.json
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Test / temp
+*.tmp
+*.log
