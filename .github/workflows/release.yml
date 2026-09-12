@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - run: npm install
+      - run: npm run typecheck
+      - run: npm run test
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --all-features
+      - run: npm run tauri build
+      - name: Create GitHub release and attach Windows installers
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $files = Get-ChildItem -Recurse -File src-tauri/target/release/bundle | Where-Object { $_.Extension -in '.msi', '.exe' } | ForEach-Object { $_.FullName }
+          if (-not $files) { throw 'No Windows installer artifacts were produced.' }
+          gh release create $env:GITHUB_REF_NAME @files --title "Usage $env:GITHUB_REF_NAME" --generate-notes
