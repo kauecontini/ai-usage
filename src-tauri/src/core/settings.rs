@@ -81,8 +81,10 @@ mod tests {
 
     #[test]
     fn validates_refresh_bounds() {
-        let mut s = AppSettings::default();
-        s.refresh_interval_minutes = 0;
+        let s = AppSettings {
+            refresh_interval_minutes: 0,
+            ..AppSettings::default()
+        };
         assert_eq!(s.validate().refresh_interval_minutes, 1);
     }
 }
