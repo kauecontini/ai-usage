@@ -506,10 +506,12 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Moved(position) = event {
                 let state = window.state::<SharedState>();
-                if let Ok(mut current) = state.settings.write() {
+                let settings_path = state.paths.settings.clone();
+                let write_result = state.settings.write();
+                if let Ok(mut current) = write_result {
                     current.widget_x = Some(position.x);
                     current.widget_y = Some(position.y);
-                    let _ = settings::save(&state.paths.settings, &current);
+                    let _ = settings::save(&settings_path, &current);
                 }
             }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
