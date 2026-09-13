@@ -7,10 +7,11 @@ use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
-    io,
+    ffi::OsStr,
+    fs, io,
     path::{Path, PathBuf},
     process::Stdio,
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -84,7 +85,7 @@ async fn fetch_inner() -> Result<ProviderUsage, String> {
     send(&mut writer, &json!({"method":"initialized"})).await?;
     send(
         &mut writer,
-        &json!({"id":2,"method":"account/rateLimits/read","params":{"excludeResetCreditDetails":true}}),
+        &json!({"id":2,"method":"account/rateLimits/read"}),
     )
     .await?;
     let value = wait_result(&mut reader, 2).await?;
@@ -152,17 +153,13 @@ fn spawn_codex() -> io::Result<Child> {
 fn resolve_codex_executable() -> PathBuf {
     #[cfg(windows)]
     {
-        if let Some(path) = find_codex_exe_on_path() {
+        if let Some(path) = resolve_codex_executable_from(
+            std::env::var_os("CODEX_CLI_PATH").as_deref(),
+            std::env::var_os("PATH").as_deref(),
+            std::env::var_os("LOCALAPPDATA").as_deref().map(Path::new),
+            std::env::var_os("APPDATA").as_deref().map(Path::new),
+        ) {
             return path;
-        }
-        if let Some(appdata) = std::env::var_os("APPDATA") {
-            let npm_root = PathBuf::from(appdata).join("npm");
-            if let Some(path) = native_npm_codex_candidates(&npm_root)
-                .into_iter()
-                .find(|candidate| candidate.is_file())
-            {
-                return path;
-            }
         }
         PathBuf::from("codex.exe")
     }
@@ -173,12 +170,100 @@ fn resolve_codex_executable() -> PathBuf {
 }
 
 #[cfg(windows)]
-fn find_codex_exe_on_path() -> Option<PathBuf> {
-    std::env::var_os("PATH").and_then(|value| {
-        std::env::split_paths(&value)
+fn resolve_codex_executable_from(
+    explicit: Option<&OsStr>,
+    path_value: Option<&OsStr>,
+    local_app_data: Option<&Path>,
+    app_data: Option<&Path>,
+) -> Option<PathBuf> {
+    if let Some(candidate) = explicit.map(PathBuf::from).filter(|path| path.is_file()) {
+        return Some(candidate);
+    }
+    if let Some(candidate) = find_codex_exe_on_path(path_value) {
+        return Some(candidate);
+    }
+    if let Some(local_app_data) = local_app_data {
+        let desktop_root = local_app_data.join("OpenAI").join("Codex").join("bin");
+        if let Some(candidate) = newest_codex_candidate(&[desktop_root]) {
+            return Some(candidate);
+        }
+        if let Some(candidate) = newest_codex_candidate(&codex_msix_bin_roots(local_app_data)) {
+            return Some(candidate);
+        }
+    }
+    app_data.and_then(|app_data| {
+        native_npm_codex_candidates(&app_data.join("npm"))
+            .into_iter()
+            .find(|candidate| candidate.is_file())
+    })
+}
+
+#[cfg(windows)]
+fn find_codex_exe_on_path(path_value: Option<&OsStr>) -> Option<PathBuf> {
+    path_value.and_then(|value| {
+        std::env::split_paths(value)
             .map(|dir| dir.join("codex.exe"))
             .find(|candidate| candidate.is_file())
     })
+}
+
+#[cfg(windows)]
+fn codex_candidates_in_bin(bin_root: &Path) -> Vec<PathBuf> {
+    let mut candidates = vec![bin_root.join("codex.exe")];
+    if let Ok(entries) = fs::read_dir(bin_root) {
+        for entry in entries.flatten() {
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                candidates.push(entry.path().join("codex.exe"));
+            }
+        }
+    }
+    candidates.retain(|candidate| candidate.is_file());
+    candidates
+}
+
+#[cfg(windows)]
+fn codex_msix_bin_roots(local_app_data: &Path) -> Vec<PathBuf> {
+    let packages = local_app_data.join("Packages");
+    let mut roots = Vec::new();
+    if let Ok(entries) = fs::read_dir(packages) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+            if entry.file_type().is_ok_and(|kind| kind.is_dir())
+                && name.starts_with("openai.codex_")
+            {
+                roots.push(
+                    entry
+                        .path()
+                        .join("LocalCache")
+                        .join("Local")
+                        .join("OpenAI")
+                        .join("Codex")
+                        .join("bin"),
+                );
+            }
+        }
+    }
+    roots.sort();
+    roots
+}
+
+#[cfg(windows)]
+fn newest_codex_candidate(bin_roots: &[PathBuf]) -> Option<PathBuf> {
+    let mut candidates: Vec<_> = bin_roots
+        .iter()
+        .flat_map(|root| codex_candidates_in_bin(root))
+        .collect();
+    candidates.sort_by(|left, right| {
+        let modified = |path: &Path| {
+            path.metadata()
+                .and_then(|metadata| metadata.modified())
+                .unwrap_or(SystemTime::UNIX_EPOCH)
+        };
+        modified(right)
+            .cmp(&modified(left))
+            .then_with(|| left.cmp(right))
+    });
+    candidates.into_iter().next()
 }
 
 #[cfg(windows)]
@@ -288,6 +373,39 @@ fn safe_error(error: &str) -> String {
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
+    struct TestDir(PathBuf);
+
+    #[cfg(windows)]
+    impl TestDir {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "usage-{label}-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn executable(&self, relative: &str) -> PathBuf {
+            let path = self.0.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, b"synthetic executable").unwrap();
+            path
+        }
+    }
+
+    #[cfg(windows)]
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
     #[test]
     fn parses_current_rate_limit_shape() {
         let raw = json!({"rateLimits":{"limitId":"codex","limitName":"Codex","primary":{"usedPercent":28.0,"windowDurationMins":300,"resetsAt":2000},"secondary":{"usedPercent":54.0,"windowDurationMins":10080,"resetsAt":3000}},"rateLimitsByLimitId":null});
@@ -314,5 +432,62 @@ mod tests {
         assert!(candidates
             .iter()
             .all(|candidate| candidate.to_string_lossy().contains("vendor")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn finds_codex_desktop_at_bin_root() {
+        let fixture = TestDir::new("codex-root");
+        let expected = fixture.executable(r"OpenAI\Codex\bin\codex.exe");
+        let actual = resolve_codex_executable_from(None, None, Some(&fixture.0), None);
+        assert_eq!(actual, Some(expected));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn finds_codex_desktop_in_hash_directory() {
+        let fixture = TestDir::new("codex-hash");
+        let expected = fixture.executable(r"OpenAI\Codex\bin\synthetic-hash\codex.exe");
+        let actual = resolve_codex_executable_from(None, None, Some(&fixture.0), None);
+        assert_eq!(actual, Some(expected));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn finds_codex_desktop_in_msix_local_cache() {
+        let fixture = TestDir::new("codex-msix");
+        let expected = fixture.executable(
+            r"Packages\OpenAI.Codex_test\LocalCache\Local\OpenAI\Codex\bin\hash\codex.exe",
+        );
+        let actual = resolve_codex_executable_from(None, None, Some(&fixture.0), None);
+        assert_eq!(actual, Some(expected));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn returns_none_when_no_codex_candidate_exists() {
+        let fixture = TestDir::new("codex-absent");
+        assert_eq!(
+            resolve_codex_executable_from(None, None, Some(&fixture.0), None),
+            None
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn explicit_codex_override_has_highest_priority() {
+        let fixture = TestDir::new("codex-priority");
+        let explicit = fixture.executable(r"override\codex.exe");
+        let path_dir = fixture.0.join("path");
+        fixture.executable(r"path\codex.exe");
+        fixture.executable(r"OpenAI\Codex\bin\hash\codex.exe");
+        let path_value = std::env::join_paths([path_dir]).unwrap();
+        let actual = resolve_codex_executable_from(
+            Some(explicit.as_os_str()),
+            Some(path_value.as_os_str()),
+            Some(&fixture.0),
+            None,
+        );
+        assert_eq!(actual, Some(explicit));
     }
 }

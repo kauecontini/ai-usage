@@ -30,4 +30,6 @@ regex = "1"
 thiserror = "2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.60", features = ["Win32_Foundation"] }
+aes-gcm = "0.10"
+base64 = "0.22"
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
