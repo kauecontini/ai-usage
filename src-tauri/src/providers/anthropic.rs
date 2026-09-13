@@ -10,6 +10,7 @@ use std::{env, fs, path::PathBuf, time::Duration};
 
 const SOURCE: &str = "claude_oauth_usage_unofficial";
 const ENDPOINT: &str = "https://api.anthropic.com/api/oauth/usage";
+const USER_AGENT: &str = "claude-code/usage-0.1.0 (external, cli)";
 
 #[derive(Debug, Deserialize)]
 struct ApiResponse {
@@ -22,7 +23,6 @@ struct Limit {
     kind: Option<String>,
     percent: Option<f64>,
     resets_at: Option<String>,
-    is_active: Option<bool>,
 }
 #[derive(Debug, Deserialize)]
 struct LegacyWindow {
@@ -50,7 +50,7 @@ async fn fetch_inner() -> Result<ProviderUsage, (ProviderStatus, String)> {
         .redirect(Policy::none())
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(12))
-        .user_agent("Usage/0.1.0")
+        .user_agent(USER_AGENT)
         .build()
         .map_err(|_| {
             (
@@ -63,6 +63,8 @@ async fn fetch_inner() -> Result<ProviderUsage, (ProviderStatus, String)> {
         .get(ENDPOINT)
         .bearer_auth(&token)
         .header("anthropic-beta", "oauth-2025-04-20")
+        .header("anthropic-version", "2023-06-01")
+        .header("x-app", "cli")
         .header("accept", "application/json")
         .send()
         .await
@@ -169,7 +171,7 @@ fn parse_windows(
     let mut session = None;
     let mut weekly = None;
     if let Some(limits) = payload.limits {
-        for limit in limits.into_iter().filter(|l| l.is_active.unwrap_or(true)) {
+        for limit in limits {
             let Some(percent) = limit.percent else {
                 continue;
             };
@@ -242,9 +244,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_current_limits_array() {
-        let payload: ApiResponse = serde_json::from_value(serde_json::json!({"limits":[{"kind":"session","percent":18.0,"resets_at":"2026-09-12T20:00:00Z","is_active":true},{"kind":"weekly_all","percent":67.0,"resets_at":"2026-09-14T20:00:00Z","is_active":true}]})).unwrap();
+    fn parses_current_limits_array_even_when_weekly_is_not_active() {
+        let payload: ApiResponse = serde_json::from_value(serde_json::json!({"limits":[{"kind":"session","percent":18.0,"resets_at":"2026-09-12T20:00:00Z","is_active":true},{"kind":"weekly_all","percent":67.0,"resets_at":"2026-09-14T20:00:00Z","is_active":false}]})).unwrap();
         let windows = parse_windows(payload).unwrap();
+        assert_eq!(windows.len(), 2);
         assert_eq!(windows[0].remaining_percent, Some(82.0));
         assert_eq!(windows[1].remaining_percent, Some(33.0));
     }
