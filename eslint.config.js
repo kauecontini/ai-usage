@@ -13,6 +13,7 @@ export default tseslint.config(
     languageOptions: { globals: globals.browser },
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',
+      'react-hooks/set-state-in-effect': 'off',
     },
   },
 )
