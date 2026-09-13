@@ -6,7 +6,12 @@ use crate::core::{
 use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::{io, process::Stdio, time::Duration};
+use std::{
+    io,
+    path::{Path, PathBuf},
+    process::Stdio,
+    time::Duration,
+};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, Command},
@@ -128,7 +133,8 @@ async fn fetch_inner() -> Result<ProviderUsage, String> {
 }
 
 fn spawn_codex() -> io::Result<Child> {
-    let mut command = Command::new("codex");
+    let executable = resolve_codex_executable();
+    let mut command = Command::new(executable);
     command
         .args(["app-server", "--listen", "stdio://"])
         .stdin(Stdio::piped())
@@ -143,10 +149,66 @@ fn spawn_codex() -> io::Result<Child> {
     command.spawn()
 }
 
-async fn send(
-    writer: &mut tokio::process::ChildStdin,
-    message: &Value,
-) -> Result<(), String> {
+fn resolve_codex_executable() -> PathBuf {
+    #[cfg(windows)]
+    {
+        if let Some(path) = find_codex_exe_on_path() {
+            return path;
+        }
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            let npm_root = PathBuf::from(appdata).join("npm");
+            if let Some(path) = native_npm_codex_candidates(&npm_root)
+                .into_iter()
+                .find(|candidate| candidate.is_file())
+            {
+                return path;
+            }
+        }
+        PathBuf::from("codex.exe")
+    }
+    #[cfg(not(windows))]
+    {
+        PathBuf::from("codex")
+    }
+}
+
+#[cfg(windows)]
+fn find_codex_exe_on_path() -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|value| {
+        std::env::split_paths(&value)
+            .map(|dir| dir.join("codex.exe"))
+            .find(|candidate| candidate.is_file())
+    })
+}
+
+#[cfg(windows)]
+fn native_npm_codex_candidates(npm_root: &Path) -> Vec<PathBuf> {
+    let (package, target) = match std::env::consts::ARCH {
+        "aarch64" => ("codex-win32-arm64", "aarch64-pc-windows-msvc"),
+        _ => ("codex-win32-x64", "x86_64-pc-windows-msvc"),
+    };
+    let relative = PathBuf::from("vendor")
+        .join(target)
+        .join("codex")
+        .join("codex.exe");
+    vec![
+        npm_root
+            .join("node_modules")
+            .join("@openai")
+            .join("codex")
+            .join("node_modules")
+            .join("@openai")
+            .join(package)
+            .join(&relative),
+        npm_root
+            .join("node_modules")
+            .join("@openai")
+            .join(package)
+            .join(relative),
+    ]
+}
+
+async fn send(writer: &mut tokio::process::ChildStdin, message: &Value) -> Result<(), String> {
     let mut line =
         serde_json::to_vec(message).map_err(|_| "Unable to encode Codex request".to_string())?;
     line.push(b'\n');
@@ -197,7 +259,8 @@ async fn wait_result(
 
 fn classify_error(error: &str) -> ProviderStatus {
     let lower = error.to_ascii_lowercase();
-    if lower.contains("not found") || lower.contains("unavailable") || lower.contains("cannot find") {
+    if lower.contains("not found") || lower.contains("unavailable") || lower.contains("cannot find")
+    {
         ProviderStatus::Unsupported
     } else if lower.contains("auth")
         || lower.contains("login")
@@ -237,5 +300,19 @@ mod tests {
         let error = "Authorization: Bearer abcdefghijklmnopqrstuvwxyz123456";
         let safe = safe_error(error);
         assert!(!safe.contains("abcdefghijklmnopqrstuvwxyz"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn npm_candidates_point_to_native_executable() {
+        let root = Path::new(r"C:\Users\test\AppData\Roaming\npm");
+        let candidates = native_npm_codex_candidates(root);
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates
+            .iter()
+            .all(|candidate| candidate.ends_with(Path::new("codex.exe"))));
+        assert!(candidates
+            .iter()
+            .all(|candidate| candidate.to_string_lossy().contains("vendor")));
     }
 }
