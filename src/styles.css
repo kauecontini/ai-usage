@@ -64,7 +64,7 @@ button {
   top: 0;
   left: 0;
   right: 0;
-  height: 7px;
+  height: 16px;
   cursor: grab;
 }
 .drag-rail:active {
@@ -425,6 +425,17 @@ button {
 }
 .primary-button:hover {
   background: #fff;
+}
+.primary-button:disabled,
+.secondary-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.onboarding-error {
+  margin: 7px 0 0;
+  font-size: 10px;
+  color: var(--danger);
+  text-align: right;
 }
 .secondary-button:hover {
   background: #1a1a1d;

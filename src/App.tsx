@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import { type PointerEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { ProviderLogo } from './components/ProviderLogo'
 import {
   compactWindows,
@@ -34,6 +35,8 @@ export default function App() {
     'compact',
   )
   const [refreshing, setRefreshing] = useState(false)
+  const [finishingOnboarding, setFinishingOnboarding] = useState(false)
+  const [onboardingError, setOnboardingError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     const [nextSnapshot, nextSettings] = await Promise.all([
@@ -90,20 +93,37 @@ export default function App() {
   }
 
   async function finishOnboarding() {
-    if (!settings) return
-    const saved = await invoke<AppSettings>('save_settings', {
-      settings: { ...settings, firstRunComplete: true },
-    })
-    setSettings(saved)
-    await refreshNow()
-    await switchSurface('compact')
+    if (!settings || finishingOnboarding) return
+    setFinishingOnboarding(true)
+    setOnboardingError(null)
+    try {
+      const saved = await invoke<AppSettings>('save_settings', {
+        settings: { ...settings, firstRunComplete: true },
+      })
+      setSettings(saved)
+      await refreshNow()
+      await switchSurface('compact')
+    } catch {
+      setOnboardingError('Unable to finish setup. Please try again.')
+    } finally {
+      setFinishingOnboarding(false)
+    }
+  }
+
+  async function startDragging(event: PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return
+    try {
+      await getCurrentWindow().startDragging()
+    } catch {
+      // The window may be unavailable while the app is shutting down.
+    }
   }
 
   if (!settings) return <div className="loading-shell" />
 
   return (
     <main className={`app-shell surface-${surface}`}>
-      <div className="drag-rail" data-tauri-drag-region />
+      <div className="drag-rail" onPointerDown={(event) => void startDragging(event)} />
       {surface === 'compact' && (
         <CompactView
           providers={providers}
@@ -134,7 +154,9 @@ export default function App() {
           providers={providers}
           refreshing={refreshing}
           onRefresh={() => void refreshNow()}
-          onContinue={() => void finishOnboarding()}
+          finishing={finishingOnboarding}
+          error={onboardingError}
+          onContinue={finishOnboarding}
         />
       )}
     </main>
@@ -385,12 +407,16 @@ function Onboarding({
   providers,
   refreshing,
   onRefresh,
+  finishing,
+  error,
   onContinue,
 }: {
   providers: ProviderUsage[]
   refreshing: boolean
   onRefresh: () => void
-  onContinue: () => void
+  finishing: boolean
+  error: string | null
+  onContinue: () => Promise<void>
 }) {
   return (
     <section className="onboarding-view">
@@ -419,10 +445,15 @@ function Onboarding({
         <button className="secondary-button" onClick={onRefresh} disabled={refreshing}>
           {refreshing ? 'Checking…' : 'Check again'}
         </button>
-        <button className="primary-button" onClick={onContinue}>
-          Continue
+        <button className="primary-button" onClick={() => void onContinue()} disabled={finishing}>
+          {finishing ? 'Finishing…' : 'Continue'}
         </button>
       </div>
+      {error && (
+        <p className="onboarding-error" role="status">
+          {error}
+        </p>
+      )}
     </section>
   )
 }

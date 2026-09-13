@@ -115,6 +115,11 @@ fn save_settings(
     state: State<'_, SharedState>,
     settings: AppSettings,
 ) -> Result<AppSettings, String> {
+    let current = state
+        .settings
+        .read()
+        .map_err(|_| "Settings unavailable".to_string())?
+        .clone();
     let mut validated = settings.validate();
 
     // Window coordinates are runtime-owned state. Capture the actual current position
@@ -124,12 +129,12 @@ fn save_settings(
             validated.widget_x = Some(position.x);
             validated.widget_y = Some(position.y);
         }
-    } else if let Ok(current) = state.settings.read() {
+    } else {
         validated.widget_x = current.widget_x;
         validated.widget_y = current.widget_y;
     }
 
-    apply_runtime_settings(&app, &validated)?;
+    apply_runtime_settings(&app, &current, &validated)?;
     settings::save(&state.paths.settings, &validated)
         .map_err(|_| "Unable to save settings".to_string())?;
     *state
@@ -153,23 +158,41 @@ fn set_surface(window: WebviewWindow, surface: String) -> Result<(), String> {
         .map_err(|_| "Unable to resize Usage".to_string())
 }
 
-fn apply_runtime_settings(app: &AppHandle, settings: &AppSettings) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("main") {
-        window
-            .set_always_on_top(settings.always_on_top)
-            .map_err(|_| "Unable to change always-on-top".to_string())?;
+fn apply_runtime_settings(
+    app: &AppHandle,
+    current: &AppSettings,
+    updated: &AppSettings,
+) -> Result<(), String> {
+    if current.always_on_top != updated.always_on_top {
+        if let Some(window) = app.get_webview_window("main") {
+            window
+                .set_always_on_top(updated.always_on_top)
+                .map_err(|_| "Unable to change always-on-top".to_string())?;
+        }
     }
-    let manager = app.autolaunch();
-    if settings.launch_at_startup {
-        manager
-            .enable()
-            .map_err(|_| "Unable to enable launch at startup".to_string())?;
-    } else {
-        manager
-            .disable()
-            .map_err(|_| "Unable to disable launch at startup".to_string())?;
+
+    if let Some(desired) = autostart_change(current, updated) {
+        let manager = app.autolaunch();
+        let enabled = manager
+            .is_enabled()
+            .map_err(|_| "Unable to read launch at startup".to_string())?;
+        if enabled != desired {
+            if desired {
+                manager
+                    .enable()
+                    .map_err(|_| "Unable to enable launch at startup".to_string())?;
+            } else {
+                manager
+                    .disable()
+                    .map_err(|_| "Unable to disable launch at startup".to_string())?;
+            }
+        }
     }
     Ok(())
+}
+
+fn autostart_change(current: &AppSettings, updated: &AppSettings) -> Option<bool> {
+    (current.launch_at_startup != updated.launch_at_startup).then_some(updated.launch_at_startup)
 }
 
 async fn refresh_all(app: &AppHandle, state: SharedState, force: bool) -> UsageSnapshot {
@@ -557,5 +580,38 @@ mod tests {
             mark_cache_stale(snapshot).providers[0].status,
             ProviderStatus::Stale
         );
+    }
+
+    #[test]
+    fn unchanged_autostart_has_no_runtime_side_effect() {
+        let settings = AppSettings::default();
+        assert_eq!(autostart_change(&settings, &settings), None);
+
+        let enabled = AppSettings {
+            launch_at_startup: true,
+            ..AppSettings::default()
+        };
+        assert_eq!(autostart_change(&enabled, &enabled), None);
+    }
+
+    #[test]
+    fn changed_autostart_requests_the_desired_state() {
+        let disabled = AppSettings::default();
+        let enabled = AppSettings {
+            launch_at_startup: true,
+            ..AppSettings::default()
+        };
+        assert_eq!(autostart_change(&disabled, &enabled), Some(true));
+        assert_eq!(autostart_change(&enabled, &disabled), Some(false));
+    }
+
+    #[test]
+    fn completing_onboarding_does_not_touch_autostart() {
+        let current = AppSettings::default();
+        let completed = AppSettings {
+            first_run_complete: true,
+            ..current.clone()
+        };
+        assert_eq!(autostart_change(&current, &completed), None);
     }
 }
