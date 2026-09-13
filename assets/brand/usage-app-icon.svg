@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Usage app icon">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1A1C20"/>
+      <stop offset="0.48" stop-color="#0D0F12"/>
+      <stop offset="1" stop-color="#050506"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6E737B" stop-opacity="0.58"/>
+      <stop offset="0.18" stop-color="#3C4047" stop-opacity="0.35"/>
+      <stop offset="0.72" stop-color="#1A1C21" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#444850" stop-opacity="0.22"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Transparent canvas outside the app tile. -->
+  <rect x="24" y="24" width="976" height="976" rx="214" fill="url(#tile)"/>
+  <rect x="25.5" y="25.5" width="973" height="973" rx="212.5" fill="none" stroke="url(#edge)" stroke-width="3"/>
+  <path d="M72 110C115 62 171 48 250 48H774C853 48 909 62 952 110" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="6" stroke-linecap="round"/>
+
+  <!-- Official Usage mark. Pure vector geometry. -->
+  <g fill="#FFFFFF">
+    <path d="M282 300H402V607C402 704 448 764 512 764C576 764 622 704 622 607V399L494 483L622 300H742V607C742 780 646 884 512 884C378 884 282 780 282 607V300Z"/>
+  </g>
+</svg>
