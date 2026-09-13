@@ -2,7 +2,7 @@ name: Format Source Once
 
 on:
   push:
-    branches: [main]
+    branches: [fix/final-ci]
     paths:
       - '.github/workflows/format-once.yml'
 
@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: main
+          ref: fix/final-ci
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
@@ -26,14 +26,15 @@ jobs:
       - run: npm run format
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all
       - run: cargo generate-lockfile --manifest-path src-tauri/Cargo.toml
-      - name: Commit generated formatting and lockfiles
+      - name: Commit normalized source
         shell: bash
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add package.json package-lock.json src src-tauri Cargo.lock 2>/dev/null || true
-          git add src-tauri/Cargo.lock 2>/dev/null || true
+          git add package.json package-lock.json
+          git add src
+          git add src-tauri
           if ! git diff --cached --quiet; then
-            git commit -m 'style: format source and lock dependencies'
-            git push origin HEAD:main
+            git commit -m 'style: normalize source'
+            git push origin HEAD:fix/final-ci
           fi
