@@ -18,8 +18,8 @@ impl BackoffState {
             return base;
         }
         let multiplier = 1u32
-            .checked_shl(self.failures.saturating_sub(1).min(3))
-            .unwrap_or(8);
+            .checked_shl(self.failures.saturating_sub(1).min(5))
+            .unwrap_or(32);
         (base * multiplier).min(Duration::from_secs(30 * 60))
     }
 }
