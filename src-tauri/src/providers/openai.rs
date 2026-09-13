@@ -148,16 +148,16 @@ async fn send(
     message: &Value,
 ) -> Result<(), String> {
     let mut line =
-        serde_json::to_vec(message).map_err(|_| "Unable to encode Codex request")?;
+        serde_json::to_vec(message).map_err(|_| "Unable to encode Codex request".to_string())?;
     line.push(b'\n');
     writer
         .write_all(&line)
         .await
-        .map_err(|_| "Unable to write to Codex app-server")?;
+        .map_err(|_| "Unable to write to Codex app-server".to_string())?;
     writer
         .flush()
         .await
-        .map_err(|_| "Unable to flush Codex app-server request")
+        .map_err(|_| "Unable to flush Codex app-server request".to_string())
 }
 
 async fn wait_result(
