@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
-use std::{fs, io, path::{Path, PathBuf}};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -49,11 +52,19 @@ pub struct AppPaths {
 
 impl AppPaths {
     pub fn discover() -> io::Result<Self> {
-        let base = dirs::data_local_dir().or_else(dirs::home_dir).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "local data directory unavailable"))?;
+        let base = dirs::data_local_dir()
+            .or_else(dirs::home_dir)
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, "local data directory unavailable")
+            })?;
         let data_dir = base.join("Usage");
         let logs = data_dir.join("logs");
         fs::create_dir_all(&logs)?;
-        Ok(Self { settings: data_dir.join("settings.json"), cache: data_dir.join("cache.json"), logs })
+        Ok(Self {
+            settings: data_dir.join("settings.json"),
+            cache: data_dir.join("cache.json"),
+            logs,
+        })
     }
 }
 
@@ -70,7 +81,9 @@ pub fn save(path: &Path, settings: &AppSettings) -> io::Result<()> {
 }
 
 pub fn atomic_json_write<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
-    if let Some(parent) = path.parent() { fs::create_dir_all(parent)?; }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let data = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
     fs::write(path, data)
 }

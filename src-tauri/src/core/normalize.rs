@@ -7,7 +7,12 @@ pub fn clamp_percent(value: f64) -> Option<f64> {
     Some(value.clamp(0.0, 100.0))
 }
 
-pub fn normalize_window(id: impl Into<String>, label: impl Into<String>, used: f64, reset_at: Option<i64>) -> UsageWindow {
+pub fn normalize_window(
+    id: impl Into<String>,
+    label: impl Into<String>,
+    used: f64,
+    reset_at: Option<i64>,
+) -> UsageWindow {
     let used_percent = clamp_percent(used);
     let remaining_percent = used_percent.map(|v| (100.0 - v).clamp(0.0, 100.0));
     UsageWindow {
@@ -42,8 +47,14 @@ mod tests {
 
     #[test]
     fn clamps_percentages() {
-        assert_eq!(normalize_window("p", "x", -3.0, None).remaining_percent, Some(100.0));
-        assert_eq!(normalize_window("p", "x", 130.0, None).remaining_percent, Some(0.0));
+        assert_eq!(
+            normalize_window("p", "x", -3.0, None).remaining_percent,
+            Some(100.0)
+        );
+        assert_eq!(
+            normalize_window("p", "x", 130.0, None).remaining_percent,
+            Some(0.0)
+        );
         assert_eq!(clamp_percent(f64::NAN), None);
     }
 

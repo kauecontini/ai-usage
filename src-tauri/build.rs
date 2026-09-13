@@ -3,7 +3,9 @@ use std::{fs, path::Path};
 
 fn main() {
     let encoded = include_str!("icons/icon-valid.ico.b64").trim();
-    let icon = STANDARD.decode(encoded).expect("valid embedded Windows icon");
+    let icon = STANDARD
+        .decode(encoded)
+        .expect("valid embedded Windows icon");
     let icon_path = Path::new("icons/icon.ico");
     fs::write(icon_path, icon).expect("write generated Windows icon");
 

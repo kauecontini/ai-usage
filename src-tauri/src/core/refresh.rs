@@ -7,16 +7,27 @@ pub struct BackoffState {
 }
 
 impl BackoffState {
-    pub fn record_success(&mut self) { self.failures = 0; }
-    pub fn record_failure(&mut self) { self.failures = self.failures.saturating_add(1); }
+    pub fn record_success(&mut self) {
+        self.failures = 0;
+    }
+    pub fn record_failure(&mut self) {
+        self.failures = self.failures.saturating_add(1);
+    }
     pub fn delay(&self, base: Duration) -> Duration {
-        if self.failures == 0 { return base; }
-        let multiplier = 1u32.checked_shl(self.failures.saturating_sub(1).min(3)).unwrap_or(8);
+        if self.failures == 0 {
+            return base;
+        }
+        let multiplier = 1u32
+            .checked_shl(self.failures.saturating_sub(1).min(3))
+            .unwrap_or(8);
         (base * multiplier).min(Duration::from_secs(30 * 60))
     }
 }
 
-pub fn merge_with_previous(previous: Option<&ProviderUsage>, mut current: ProviderUsage) -> ProviderUsage {
+pub fn merge_with_previous(
+    previous: Option<&ProviderUsage>,
+    mut current: ProviderUsage,
+) -> ProviderUsage {
     if current.status == ProviderStatus::Fresh {
         return current;
     }
@@ -38,7 +49,9 @@ mod tests {
         let mut b = BackoffState::default();
         let base = Duration::from_secs(180);
         assert_eq!(b.delay(base), base);
-        for _ in 0..10 { b.record_failure(); }
+        for _ in 0..10 {
+            b.record_failure();
+        }
         assert_eq!(b.delay(base), Duration::from_secs(1800));
         b.record_success();
         assert_eq!(b.delay(base), base);
@@ -48,10 +61,23 @@ mod tests {
     fn preserves_last_known_values_as_stale() {
         let old = ProviderUsage {
             provider: ProviderId::Openai,
-            windows: vec![UsageWindow { id: "p".into(), label: "5 hours".into(), used_percent: Some(20.0), remaining_percent: Some(80.0), reset_at: None }],
-            last_updated: Some(1), source: "x".into(), status: ProviderStatus::Fresh, error: None,
+            windows: vec![UsageWindow {
+                id: "p".into(),
+                label: "5 hours".into(),
+                used_percent: Some(20.0),
+                remaining_percent: Some(80.0),
+                reset_at: None,
+            }],
+            last_updated: Some(1),
+            source: "x".into(),
+            status: ProviderStatus::Fresh,
+            error: None,
         };
-        let failed = ProviderUsage { status: ProviderStatus::Unavailable, error: Some("failed".into()), ..ProviderUsage::empty(ProviderId::Openai, "x") };
+        let failed = ProviderUsage {
+            status: ProviderStatus::Unavailable,
+            error: Some("failed".into()),
+            ..ProviderUsage::empty(ProviderId::Openai, "x")
+        };
         let merged = merge_with_previous(Some(&old), failed);
         assert_eq!(merged.status, ProviderStatus::Stale);
         assert_eq!(merged.windows[0].remaining_percent, Some(80.0));
