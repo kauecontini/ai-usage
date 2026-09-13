@@ -1,11 +1,6 @@
 export type ProviderId = 'openai' | 'anthropic'
 export type ProviderStatus =
-  | 'fresh'
-  | 'stale'
-  | 'unavailable'
-  | 'authentication_required'
-  | 'rate_limited'
-  | 'unsupported'
+  'fresh' | 'stale' | 'unavailable' | 'authentication_required' | 'rate_limited' | 'unsupported'
 
 export interface UsageWindow {
   id: string

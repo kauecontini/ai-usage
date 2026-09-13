@@ -7,7 +7,9 @@ export function percentage(value: number | null): string {
 
 export function compactWindows(provider: ProviderUsage, showLongWindow = true): UsageWindow[] {
   const windows = provider.windows.slice(0, showLongWindow ? 2 : 1)
-  return windows.length ? windows : [emptyWindow('short'), emptyWindow('long')].slice(0, showLongWindow ? 2 : 1)
+  return windows.length
+    ? windows
+    : [emptyWindow('short'), emptyWindow('long')].slice(0, showLongWindow ? 2 : 1)
 }
 
 function emptyWindow(id: string): UsageWindow {
