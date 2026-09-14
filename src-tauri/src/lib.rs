@@ -635,6 +635,17 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Focused(false) = event {
+                let keep_on_top = window
+                    .state::<SharedState>()
+                    .settings
+                    .read()
+                    .map(|settings| settings.always_on_top)
+                    .unwrap_or(false);
+                if keep_on_top {
+                    let _ = window.set_always_on_top(true);
+                }
+            }
             if let tauri::WindowEvent::Moved(position) = event {
                 let state = window.state::<SharedState>();
                 let settings_path = state.paths.settings.clone();

@@ -12,17 +12,17 @@ export function ProviderLogo({ provider, size = 20 }: { provider: ProviderId; si
         fill="#d97757"
       >
         <g transform="translate(12 12)">
-          <rect x="-1.45" y="-10.5" width="2.9" height="7.8" rx="1.45" />
-          <rect x="-1.45" y="2.7" width="2.9" height="7.8" rx="1.45" />
-          <rect x="-10.5" y="-1.45" width="7.8" height="2.9" rx="1.45" />
-          <rect x="2.7" y="-1.45" width="7.8" height="2.9" rx="1.45" />
-          <rect x="-1.45" y="-10.5" width="2.9" height="7.8" rx="1.45" transform="rotate(45)" />
-          <rect x="-1.45" y="-10.5" width="2.9" height="7.8" rx="1.45" transform="rotate(90)" />
-          <rect x="-1.45" y="-10.5" width="2.9" height="7.8" rx="1.45" transform="rotate(135)" />
-          <rect x="-1.45" y="-10.5" width="2.9" height="7.8" rx="1.45" transform="rotate(180)" />
-          <rect x="-1.45" y="-10.5" width="2.9" height="7.8" rx="1.45" transform="rotate(225)" />
-          <rect x="-1.45" y="-10.5" width="2.9" height="7.8" rx="1.45" transform="rotate(270)" />
-          <rect x="-1.45" y="-10.5" width="2.9" height="7.8" rx="1.45" transform="rotate(315)" />
+          {Array.from({ length: 16 }, (_, index) => (
+            <rect
+              key={index}
+              x="-1.25"
+              y="-10.5"
+              width="2.5"
+              height="7.2"
+              rx="1.25"
+              transform={`rotate(${index * 22.5})`}
+            />
+          ))}
         </g>
       </svg>
     )

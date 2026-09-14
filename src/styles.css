@@ -139,10 +139,6 @@ button {
   font-weight: 600;
   letter-spacing: -0.015em;
 }
-.value-dot {
-  color: #4e4e55;
-  margin-right: 5px;
-}
 .provider-divider {
   position: absolute;
   right: 0;
@@ -150,15 +146,6 @@ button {
   width: 1px;
   height: 22px;
   background: var(--border);
-}
-.stale-dot {
-  position: absolute;
-  top: 5px;
-  right: 5px;
-  width: 4px;
-  height: 4px;
-  border: 1px solid #777780;
-  border-radius: 50%;
 }
 .compact-actions {
   position: relative;
@@ -170,9 +157,9 @@ button {
 .compact-action {
   width: 28px;
   height: 28px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 8px;
-  background: #17171a;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: #d6d6da;
   font-size: 15px;
   line-height: 1;
@@ -185,8 +172,7 @@ button {
     transform 120ms ease;
 }
 .compact-action:hover {
-  background: #222226;
-  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.07);
 }
 .compact-action:active {
   transform: scale(0.94);

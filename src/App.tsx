@@ -180,24 +180,30 @@ function CompactView({
 }) {
   return (
     <section className="compact-view" aria-label="Compact usage widget">
-      <button className="compact-summary" onClick={onOpen} aria-label="Open usage details">
+      <button
+        className="compact-summary"
+        onClick={onOpen}
+        onPointerDown={() => void startWindowDragging()}
+        aria-label="Open usage details"
+      >
         {providers.map((provider, index) => (
           <div className="compact-provider" key={provider.provider} title={statusLabel(provider)}>
             <span className="provider-logo">
-              <ProviderLogo provider={provider.provider} size={16} />
+              <ProviderLogo
+                provider={provider.provider}
+                size={provider.provider === 'openai' ? 14 : 16}
+              />
             </span>
             <div className="compact-values">
-              {compactWindows(provider, showLongWindow).map((window, windowIndex) => (
+              {compactWindows(provider, showLongWindow).map((window) => (
                 <span
                   key={`${provider.provider}-${window.id}`}
                   className={`quota quota-${quotaTone(window.remainingPercent)}`}
                 >
-                  {windowIndex > 0 && <span className="value-dot">·</span>}
                   {percentage(window.remainingPercent)}
                 </span>
               ))}
             </div>
-            {provider.status === 'stale' && <span className="stale-dot" aria-label="Stale data" />}
             {index === 0 && <span className="provider-divider" />}
           </div>
         ))}
@@ -218,11 +224,19 @@ function CompactView({
           title="Expand usage details"
           aria-label="Expand usage details"
         >
-          ⌃
+          +
         </button>
       </div>
     </section>
   )
+}
+
+async function startWindowDragging() {
+  try {
+    await getCurrentWindow().startDragging()
+  } catch {
+    // The window may be unavailable while the app is shutting down.
+  }
 }
 
 function DetailView({
