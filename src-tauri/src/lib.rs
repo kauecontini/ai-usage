@@ -147,9 +147,98 @@ fn save_settings(
 #[tauri::command]
 fn set_surface(window: WebviewWindow, surface: String) -> Result<(), String> {
     let (width, height) = surface_size(&surface)?;
+    let before = window
+        .outer_position()
+        .ok()
+        .zip(window.outer_size().ok())
+        .and_then(|(position, size)| {
+            window.current_monitor().ok().flatten().map(|monitor| {
+                (
+                    WindowRect {
+                        x: position.x,
+                        y: position.y,
+                        width: i32::try_from(size.width).unwrap_or(i32::MAX),
+                        height: i32::try_from(size.height).unwrap_or(i32::MAX),
+                    },
+                    work_area_rect(&monitor),
+                )
+            })
+        });
+
     window
         .set_size(tauri::LogicalSize::new(width, height))
-        .map_err(|_| "Unable to resize Usage".to_string())
+        .map_err(|_| "Unable to resize Usage".to_string())?;
+
+    if let Some((before, work_area)) = before {
+        if let Ok(size) = window.outer_size() {
+            let after = resized_window_rect(
+                before,
+                i32::try_from(size.width).unwrap_or(i32::MAX),
+                i32::try_from(size.height).unwrap_or(i32::MAX),
+                work_area,
+            );
+            let _ = window.set_position(PhysicalPosition::new(after.x, after.y));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct WindowRect {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
+
+fn work_area_rect(monitor: &tauri::Monitor) -> WindowRect {
+    let area = monitor.work_area();
+    WindowRect {
+        x: area.position.x,
+        y: area.position.y,
+        width: i32::try_from(area.size.width).unwrap_or(i32::MAX),
+        height: i32::try_from(area.size.height).unwrap_or(i32::MAX),
+    }
+}
+
+fn resized_window_rect(
+    before: WindowRect,
+    width: i32,
+    height: i32,
+    work_area: WindowRect,
+) -> WindowRect {
+    const ANCHOR_TOLERANCE: i32 = 24;
+    let right_edge = work_area.x.saturating_add(work_area.width);
+    let bottom_edge = work_area.y.saturating_add(work_area.height);
+    let right_margin = right_edge.saturating_sub(before.x.saturating_add(before.width));
+    let bottom_margin = bottom_edge.saturating_sub(before.y.saturating_add(before.height));
+    let anchored_right = (0..=ANCHOR_TOLERANCE).contains(&right_margin);
+    let anchored_bottom = (0..=ANCHOR_TOLERANCE).contains(&bottom_margin);
+    let x = if anchored_right {
+        right_edge
+            .saturating_sub(width)
+            .saturating_sub(right_margin)
+    } else {
+        before.x
+    };
+    let y = if anchored_bottom {
+        bottom_edge
+            .saturating_sub(height)
+            .saturating_sub(bottom_margin)
+    } else {
+        before.y
+    };
+    WindowRect {
+        x: clamp_window_axis(x, width, work_area.x, work_area.width),
+        y: clamp_window_axis(y, height, work_area.y, work_area.height),
+        width,
+        height,
+    }
+}
+
+fn clamp_window_axis(origin: i32, size: i32, area_origin: i32, area_size: i32) -> i32 {
+    let max_origin = area_origin.saturating_add(area_size).saturating_sub(size);
+    origin.clamp(area_origin, max_origin.max(area_origin))
 }
 
 fn surface_size(surface: &str) -> Result<(f64, f64), String> {
@@ -637,5 +726,123 @@ mod tests {
     #[test]
     fn compact_surface_uses_taskbar_friendly_size() {
         assert_eq!(surface_size("compact"), Ok((276.0, 44.0)));
+    }
+
+    #[test]
+    fn anchored_bottom_right_grows_towards_top_left() {
+        let work_area = WindowRect {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1040,
+        };
+        let compact = WindowRect {
+            x: 1632,
+            y: 996,
+            width: 276,
+            height: 44,
+        };
+        assert_eq!(
+            resized_window_rect(compact, 366, 344, work_area),
+            WindowRect {
+                x: 1542,
+                y: 696,
+                width: 366,
+                height: 344,
+            }
+        );
+        assert_eq!(
+            resized_window_rect(
+                WindowRect {
+                    x: 1542,
+                    y: 696,
+                    width: 366,
+                    height: 344,
+                },
+                276,
+                44,
+                work_area,
+            ),
+            compact
+        );
+    }
+
+    #[test]
+    fn centered_window_preserves_top_left() {
+        let work_area = WindowRect {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1040,
+        };
+        let centered = WindowRect {
+            x: 700,
+            y: 300,
+            width: 276,
+            height: 44,
+        };
+        assert_eq!(
+            resized_window_rect(centered, 366, 344, work_area),
+            WindowRect {
+                x: 700,
+                y: 300,
+                width: 366,
+                height: 344,
+            }
+        );
+    }
+
+    #[test]
+    fn resize_clamps_right_and_bottom_edges() {
+        let work_area = WindowRect {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1040,
+        };
+        assert_eq!(
+            resized_window_rect(
+                WindowRect {
+                    x: 1900,
+                    y: 1000,
+                    width: 20,
+                    height: 20,
+                },
+                366,
+                344,
+                work_area,
+            ),
+            WindowRect {
+                x: 1554,
+                y: 676,
+                width: 366,
+                height: 344,
+            }
+        );
+    }
+
+    #[test]
+    fn negative_second_monitor_coordinates_are_supported() {
+        let work_area = WindowRect {
+            x: -1920,
+            y: -40,
+            width: 1920,
+            height: 1040,
+        };
+        let compact = WindowRect {
+            x: -276,
+            y: 956,
+            width: 276,
+            height: 44,
+        };
+        assert_eq!(
+            resized_window_rect(compact, 366, 344, work_area),
+            WindowRect {
+                x: -366,
+                y: 656,
+                width: 366,
+                height: 344,
+            }
+        );
     }
 }
