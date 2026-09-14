@@ -142,6 +142,7 @@ fn save_settings(
 #[tauri::command]
 fn set_surface(window: WebviewWindow, surface: String) -> Result<(), String> {
     let (width, height) = surface_size(&surface)?;
+    let state = window.state::<SharedState>();
     let before = window
         .outer_position()
         .ok()
@@ -161,56 +162,87 @@ fn set_surface(window: WebviewWindow, surface: String) -> Result<(), String> {
         })
         .ok_or_else(|| "Unable to read Usage window position".to_string())?;
 
-    let state = window.state::<SharedState>();
-    let mut runtime = state
-        .window_runtime
-        .lock()
-        .map_err(|_| "Window state unavailable".to_string())?;
     let (before_rect, work_area) = before;
-    if runtime.current_surface == "compact" && surface != "compact" {
-        runtime.compact_anchor = Some(before_rect);
-    }
-    let compact_anchor = runtime.compact_anchor;
-    // Ignore every Moved event emitted by the resize itself. The final position
-    // is recorded below and is likewise identified as programmatic.
-    runtime.current_surface = "transition".into();
+    let (previous_surface, compact_anchor) = {
+        let mut runtime = state
+            .window_runtime
+            .lock()
+            .map_err(|_| "Window state unavailable".to_string())?;
+        let previous_surface = runtime.current_surface.clone();
+        let compact_anchor = begin_surface_transition(&mut runtime, &surface, before_rect);
+        (previous_surface, compact_anchor)
+    };
+    diagnostic(
+        &state.paths,
+        &format!("surface transition: {previous_surface} -> {surface}"),
+    );
 
-    window
-        .set_size(tauri::LogicalSize::new(width, height))
-        .map_err(|_| "Unable to resize Usage".to_string())?;
-    let size = window
-        .outer_size()
-        .map_err(|_| "Unable to read resized Usage window".to_string())?;
-    let target = if surface == "compact" {
-        compact_anchor.unwrap_or_else(|| {
+    let result = (|| {
+        window
+            .set_size(tauri::LogicalSize::new(width, height))
+            .map_err(|_| "Unable to resize Usage".to_string())?;
+        diagnostic(&state.paths, "surface resize ok");
+
+        let size = window
+            .outer_size()
+            .map_err(|_| "Unable to read resized Usage window".to_string())?;
+        let target = if surface == "compact" {
+            compact_anchor.unwrap_or_else(|| {
+                resized_window_rect(
+                    before_rect,
+                    i32::try_from(size.width).unwrap_or(i32::MAX),
+                    i32::try_from(size.height).unwrap_or(i32::MAX),
+                    work_area,
+                )
+            })
+        } else {
             resized_window_rect(
                 before_rect,
                 i32::try_from(size.width).unwrap_or(i32::MAX),
                 i32::try_from(size.height).unwrap_or(i32::MAX),
                 work_area,
             )
-        })
-    } else {
-        resized_window_rect(
-            before_rect,
-            i32::try_from(size.width).unwrap_or(i32::MAX),
-            i32::try_from(size.height).unwrap_or(i32::MAX),
-            work_area,
-        )
-    };
+        };
 
-    runtime.current_surface = surface;
-    runtime.programmatic_position = Some((target.x, target.y));
-    window
-        .set_position(PhysicalPosition::new(target.x, target.y))
-        .map_err(|_| "Unable to position Usage".to_string())?;
-    let always_on_top = state
-        .settings
-        .read()
-        .map_err(|_| "Settings unavailable".to_string())?
-        .always_on_top;
-    enforce_windows_topmost(&window, always_on_top)?;
-    Ok(())
+        // The Moved handler can run synchronously from set_position. Mark the
+        // target before calling into the window API, but never hold the lock
+        // across that call.
+        {
+            let mut runtime = state
+                .window_runtime
+                .lock()
+                .map_err(|_| "Window state unavailable".to_string())?;
+            mark_programmatic_position(&mut runtime, target);
+        }
+        window
+            .set_position(PhysicalPosition::new(target.x, target.y))
+            .map_err(|_| "Unable to position Usage".to_string())?;
+        diagnostic(&state.paths, "surface position ok");
+
+        {
+            let mut runtime = state
+                .window_runtime
+                .lock()
+                .map_err(|_| "Window state unavailable".to_string())?;
+            finish_surface_transition(&mut runtime, &surface, target);
+        }
+
+        let always_on_top = state
+            .settings
+            .read()
+            .map_err(|_| "Settings unavailable".to_string())?
+            .always_on_top;
+        // No runtime/settings guard is held while native window APIs run.
+        enforce_windows_topmost(&window, always_on_top)
+    })();
+
+    if let Err(error) = &result {
+        if let Ok(mut runtime) = state.window_runtime.lock() {
+            abort_surface_transition(&mut runtime, &previous_surface);
+        }
+        diagnostic(&state.paths, &format!("surface transition failed: {error}"));
+    }
+    result
 }
 
 #[derive(Debug, Default)]
@@ -218,6 +250,66 @@ struct WindowRuntime {
     current_surface: String,
     compact_anchor: Option<WindowRect>,
     programmatic_position: Option<(i32, i32)>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum MoveEventDecision {
+    Ignore,
+    PersistUserMove,
+}
+
+fn begin_surface_transition(
+    runtime: &mut WindowRuntime,
+    surface: &str,
+    before_rect: WindowRect,
+) -> Option<WindowRect> {
+    if runtime.current_surface == "compact" && surface != "compact" {
+        runtime.compact_anchor = Some(before_rect);
+    }
+    runtime.current_surface = "transition".into();
+    runtime.programmatic_position = None;
+    runtime.compact_anchor
+}
+
+fn mark_programmatic_position(runtime: &mut WindowRuntime, target: WindowRect) {
+    runtime.programmatic_position = Some((target.x, target.y));
+}
+
+fn finish_surface_transition(runtime: &mut WindowRuntime, surface: &str, target: WindowRect) {
+    runtime.current_surface = surface.into();
+    runtime.programmatic_position = (surface == "compact").then_some((target.x, target.y));
+}
+
+fn abort_surface_transition(runtime: &mut WindowRuntime, previous_surface: &str) {
+    if runtime.current_surface == "transition" {
+        runtime.current_surface = previous_surface.into();
+        runtime.programmatic_position = None;
+    }
+}
+
+fn classify_moved(runtime: &mut WindowRuntime, position: (i32, i32)) -> MoveEventDecision {
+    if runtime.current_surface != "compact" {
+        return MoveEventDecision::Ignore;
+    }
+    match runtime.programmatic_position {
+        Some(target) if target == position => {
+            runtime.programmatic_position = None;
+            MoveEventDecision::Ignore
+        }
+        Some(_) => {
+            runtime.programmatic_position = None;
+            MoveEventDecision::PersistUserMove
+        }
+        None => MoveEventDecision::PersistUserMove,
+    }
+}
+
+fn update_compact_anchor(runtime: &mut WindowRuntime, anchor: WindowRect) -> bool {
+    if runtime.current_surface != "compact" || runtime.programmatic_position.is_some() {
+        return false;
+    }
+    runtime.compact_anchor = Some(anchor);
+    true
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -738,33 +830,39 @@ pub fn run() {
             if let tauri::WindowEvent::Moved(position) = event {
                 let state = window.state::<SharedState>();
                 let settings_path = state.paths.settings.clone();
-                let is_programmatic = state
+                let should_persist = state
                     .window_runtime
                     .lock()
                     .map(|mut runtime| {
-                        if runtime.current_surface != "compact" {
-                            return true;
-                        }
-                        if runtime.programmatic_position == Some((position.x, position.y)) {
-                            runtime.programmatic_position = None;
-                            return true;
-                        }
-                        if let Ok(size) = window.outer_size() {
-                            runtime.compact_anchor = Some(WindowRect {
-                                x: position.x,
-                                y: position.y,
-                                width: i32::try_from(size.width).unwrap_or(i32::MAX),
-                                height: i32::try_from(size.height).unwrap_or(i32::MAX),
-                            });
-                        }
-                        false
+                        classify_moved(&mut runtime, (position.x, position.y))
+                            == MoveEventDecision::PersistUserMove
                     })
                     .unwrap_or(true);
-                if !is_programmatic {
-                    if let Ok(mut current) = state.settings.write() {
-                        current.widget_x = Some(position.x);
-                        current.widget_y = Some(position.y);
-                        let _ = settings::save(&settings_path, &current);
+
+                if should_persist {
+                    // Read the native size only after releasing window_runtime.
+                    if let Ok(size) = window.outer_size() {
+                        let anchor = WindowRect {
+                            x: position.x,
+                            y: position.y,
+                            width: i32::try_from(size.width).unwrap_or(i32::MAX),
+                            height: i32::try_from(size.height).unwrap_or(i32::MAX),
+                        };
+                        let should_save = state
+                            .window_runtime
+                            .lock()
+                            .map(|mut runtime| update_compact_anchor(&mut runtime, anchor))
+                            .unwrap_or(false);
+                        if should_save {
+                            let updated = state.settings.write().ok().map(|mut current| {
+                                current.widget_x = Some(position.x);
+                                current.widget_y = Some(position.y);
+                                current.clone()
+                            });
+                            if let Some(updated) = updated {
+                                let _ = settings::save(&settings_path, &updated);
+                            }
+                        }
                     }
                 }
             }
@@ -1069,5 +1167,177 @@ mod tests {
         };
         assert_eq!(runtime.compact_anchor, Some(anchor));
         assert_ne!(runtime.compact_anchor, Some(detail));
+    }
+
+    #[test]
+    fn compact_to_detail_marks_transition_without_losing_anchor() {
+        let anchor = WindowRect {
+            x: 100,
+            y: 200,
+            width: 240,
+            height: 36,
+        };
+        let mut runtime = WindowRuntime {
+            current_surface: "compact".into(),
+            compact_anchor: None,
+            programmatic_position: None,
+        };
+
+        let compact_anchor = begin_surface_transition(
+            &mut runtime,
+            "detail",
+            WindowRect {
+                width: 240,
+                height: 36,
+                ..anchor
+            },
+        );
+
+        assert_eq!(runtime.current_surface, "transition");
+        assert_eq!(compact_anchor, Some(anchor));
+        assert_eq!(runtime.compact_anchor, Some(anchor));
+    }
+
+    #[test]
+    fn programmatic_compact_move_does_not_become_user_anchor() {
+        let anchor = WindowRect {
+            x: 100,
+            y: 200,
+            width: 240,
+            height: 36,
+        };
+        let target = WindowRect {
+            x: 300,
+            y: 400,
+            width: 240,
+            height: 36,
+        };
+        let mut runtime = WindowRuntime {
+            current_surface: "detail".into(),
+            compact_anchor: Some(anchor),
+            programmatic_position: None,
+        };
+
+        begin_surface_transition(&mut runtime, "compact", target);
+        mark_programmatic_position(&mut runtime, target);
+        finish_surface_transition(&mut runtime, "compact", target);
+
+        assert_eq!(
+            classify_moved(&mut runtime, (target.x, target.y)),
+            MoveEventDecision::Ignore
+        );
+        assert_eq!(runtime.compact_anchor, Some(anchor));
+    }
+
+    #[test]
+    fn user_move_in_compact_updates_anchor() {
+        let mut runtime = WindowRuntime {
+            current_surface: "compact".into(),
+            compact_anchor: None,
+            programmatic_position: None,
+        };
+        let anchor = WindowRect {
+            x: 40,
+            y: 50,
+            width: 240,
+            height: 36,
+        };
+
+        assert_eq!(
+            classify_moved(&mut runtime, (anchor.x, anchor.y)),
+            MoveEventDecision::PersistUserMove
+        );
+        assert!(update_compact_anchor(&mut runtime, anchor));
+        assert_eq!(runtime.compact_anchor, Some(anchor));
+    }
+
+    #[test]
+    fn detail_move_does_not_update_anchor() {
+        let anchor = WindowRect {
+            x: 40,
+            y: 50,
+            width: 240,
+            height: 36,
+        };
+        let mut runtime = WindowRuntime {
+            current_surface: "detail".into(),
+            compact_anchor: Some(anchor),
+            programmatic_position: None,
+        };
+
+        assert_eq!(
+            classify_moved(&mut runtime, (400, 500)),
+            MoveEventDecision::Ignore
+        );
+        assert!(!update_compact_anchor(
+            &mut runtime,
+            WindowRect {
+                x: 400,
+                y: 500,
+                ..anchor
+            }
+        ));
+        assert_eq!(runtime.compact_anchor, Some(anchor));
+    }
+
+    #[test]
+    fn detail_to_compact_restores_saved_anchor() {
+        let anchor = WindowRect {
+            x: 40,
+            y: 50,
+            width: 240,
+            height: 36,
+        };
+        let mut runtime = WindowRuntime {
+            current_surface: "detail".into(),
+            compact_anchor: Some(anchor),
+            programmatic_position: None,
+        };
+
+        let restored = begin_surface_transition(
+            &mut runtime,
+            "compact",
+            WindowRect {
+                x: 400,
+                y: 500,
+                width: 366,
+                height: 344,
+            },
+        );
+        assert_eq!(restored, Some(anchor));
+        finish_surface_transition(&mut runtime, "compact", anchor);
+        assert_eq!(runtime.current_surface, "compact");
+        assert_eq!(runtime.compact_anchor, Some(anchor));
+    }
+
+    #[test]
+    fn successful_and_failed_transitions_do_not_leave_transition_flag() {
+        let anchor = WindowRect {
+            x: 40,
+            y: 50,
+            width: 240,
+            height: 36,
+        };
+        let mut successful = WindowRuntime {
+            current_surface: "compact".into(),
+            compact_anchor: Some(anchor),
+            programmatic_position: None,
+        };
+        begin_surface_transition(&mut successful, "detail", anchor);
+        mark_programmatic_position(&mut successful, anchor);
+        finish_surface_transition(&mut successful, "detail", anchor);
+        assert_eq!(successful.current_surface, "detail");
+        assert_eq!(successful.programmatic_position, None);
+
+        let mut failed = WindowRuntime {
+            current_surface: "compact".into(),
+            compact_anchor: Some(anchor),
+            programmatic_position: None,
+        };
+        begin_surface_transition(&mut failed, "detail", anchor);
+        mark_programmatic_position(&mut failed, anchor);
+        abort_surface_transition(&mut failed, "compact");
+        assert_eq!(failed.current_surface, "compact");
+        assert_eq!(failed.programmatic_position, None);
     }
 }
