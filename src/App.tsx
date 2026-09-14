@@ -197,9 +197,7 @@ function CompactView({
                 </span>
               ))}
             </div>
-            {provider.status === 'stale' && (
-              <span className="stale-dot" aria-label="Stale data" />
-            )}
+            {provider.status === 'stale' && <span className="stale-dot" aria-label="Stale data" />}
             {index === 0 && <span className="provider-divider" />}
           </div>
         ))}

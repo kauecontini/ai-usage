@@ -179,7 +179,10 @@ button {
   display: grid;
   place-items: center;
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    transform 120ms ease;
 }
 .compact-action:hover {
   background: #222226;
