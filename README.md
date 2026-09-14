@@ -20,7 +20,7 @@ Percentages are **remaining**, not consumed. The detail surface shows provider-r
 - 5-hour and weekly/7-day windows when providers expose them
 - system tray, hide/show, refresh, single-instance behavior
 - optional always-on-top and launch-at-startup
-- configurable 1–60 minute refresh interval (3 minutes by default)
+- configurable 1 / 3 / 5 / 10 / 15 minute refresh presets (3 minutes by default)
 - restrained 20% / 10% / 5% native notifications without repeat spam per quota window
 - stale-cache indication instead of presenting old data as fresh
 - no Usage backend, telemetry, analytics, accounts, or cloud database
@@ -42,6 +42,8 @@ Usage reuses the Claude Code OAuth session on Windows and queries Anthropic's us
 Release builds are intended to be downloaded from GitHub Releases as a normal Windows installer. End users do not need Node.js, Rust, Python, Git, or a terminal.
 
 V0.1.0 remains **unreleased until the Windows release gate passes**. Building source today is for development verification only.
+
+The initial V0.1.0 installer is **unsigned** unless a maintainer supplies an appropriate Windows code-signing certificate. Windows SmartScreen may therefore show an unknown-publisher warning on first launch. Usage does not bundle or purchase a certificate automatically; signed releases can be added once the project has a proper certificate and signing-key process.
 
 ## How it works
 
@@ -117,6 +119,7 @@ There is intentionally no server, database, Redux store, browser automation, or 
 - Only Windows is a V0.1.0 distribution target.
 - High-DPI and monitor-removal recovery needs final validation on real Windows hardware before the first release.
 - The source repository cannot prove a user's authenticated provider behavior; the release gate requires an actual signed-in Windows run.
+- The initial V0.1.0 installer is unsigned and may trigger Windows SmartScreen until a code-signing certificate/process is added.
 - V0.1.0 does not include automatic updates. Tauri's signed updater is deferred until a signing key/release process exists rather than shipping an unsafe or incomplete updater.
 
 ## Troubleshooting

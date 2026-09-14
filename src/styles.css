@@ -10,7 +10,7 @@
     'Segoe UI',
     sans-serif;
   color: #f2f2f2;
-  background: #090909;
+  background: transparent;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   --bg: #0b0b0c;
@@ -54,9 +54,15 @@ button {
   height: 100%;
   background: linear-gradient(180deg, #111113 0%, #0c0c0e 100%);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 8px;
   overflow: hidden;
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.22);
+}
+.surface-compact {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 .drag-rail {
   position: absolute;
@@ -64,7 +70,7 @@ button {
   top: 0;
   left: 0;
   right: 0;
-  height: 7px;
+  height: 14px;
   cursor: grab;
 }
 .drag-rail:active {
@@ -78,76 +84,99 @@ button {
 }
 
 .compact-view {
-  border: 0;
   margin: 0;
-  padding: 0 14px;
+  padding: 0 4px 0 5px;
   background: transparent;
   width: 100%;
   height: 100%;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
   align-items: center;
-  cursor: pointer;
-  outline: none;
+  cursor: grab;
 }
-.compact-view:focus-visible {
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+.compact-view:active {
+  cursor: grabbing;
+}
+.compact-summary {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  min-width: 0;
+  flex: 1;
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
+  align-items: center;
 }
 .compact-provider {
-  position: relative;
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  height: 36px;
-}
-.compact-provider + .compact-provider {
-  padding-left: 15px;
+  justify-content: center;
+  gap: 4px;
+  height: 24px;
 }
 .provider-logo {
   color: #e9e9eb;
-  width: 20px;
-  height: 20px;
+  width: 14px;
+  height: 14px;
   display: grid;
   place-items: center;
-  flex: 0 0 20px;
+  flex: 0 0 14px;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35));
 }
 .compact-values {
   display: flex;
   align-items: baseline;
   min-width: 0;
-  gap: 8px;
+  gap: 4px;
 }
 .quota {
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum';
 }
 .compact-values .quota {
-  min-width: 35px;
-  font-size: 13px;
-  font-weight: 560;
+  min-width: 27px;
+  font-size: 11px;
+  font-weight: 600;
   letter-spacing: -0.015em;
 }
-.value-dot {
-  color: #4e4e55;
-  margin-right: 8px;
-}
 .provider-divider {
-  position: absolute;
-  right: 0;
-  top: 5px;
   width: 1px;
-  height: 26px;
-  background: var(--border);
+  height: 20px;
+  justify-self: center;
+  background: rgba(255, 255, 255, 0.12);
 }
-.stale-dot {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 4px;
-  height: 4px;
-  border: 1px solid #777780;
-  border-radius: 50%;
+.compact-actions {
+  position: relative;
+  z-index: 21;
+  display: flex;
+  gap: 1px;
+  margin-left: 3px;
+}
+.compact-action {
+  width: 25px;
+  height: 28px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #d6d6da;
+  font-size: 15px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+.compact-action:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.compact-action:disabled {
+  cursor: default;
+  color: #8b8b93;
 }
 .quota-warning {
   color: var(--warning);
@@ -155,6 +184,10 @@ button {
 .quota-danger,
 .quota-exhausted {
   color: var(--danger);
+}
+.surface-compact .quota,
+.surface-compact .compact-action {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
 }
 
 .detail-view,
@@ -425,6 +458,17 @@ button {
 }
 .primary-button:hover {
   background: #fff;
+}
+.primary-button:disabled,
+.secondary-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.onboarding-error {
+  margin: 7px 0 0;
+  font-size: 10px;
+  color: var(--danger);
+  text-align: right;
 }
 .secondary-button:hover {
   background: #1a1a1d;

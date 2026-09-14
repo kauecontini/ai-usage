@@ -1,5 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import { type PointerEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment } from 'react'
 import { ProviderLogo } from './components/ProviderLogo'
 import {
   compactWindows,
@@ -10,6 +12,8 @@ import {
   updatedTime,
 } from './lib/format'
 import type { AppSettings, ProviderId, ProviderUsage, UsageSnapshot } from './types'
+
+type Surface = 'compact' | 'detail' | 'settings' | 'onboarding'
 
 const EMPTY: UsageSnapshot = {
   providers: [emptyProvider('openai'), emptyProvider('anthropic')],
@@ -30,10 +34,10 @@ function emptyProvider(provider: ProviderId): ProviderUsage {
 export default function App() {
   const [snapshot, setSnapshot] = useState<UsageSnapshot>(EMPTY)
   const [settings, setSettings] = useState<AppSettings | null>(null)
-  const [surface, setSurface] = useState<'compact' | 'detail' | 'settings' | 'onboarding'>(
-    'compact',
-  )
+  const [surface, setSurface] = useState<Surface>('compact')
   const [refreshing, setRefreshing] = useState(false)
+  const [finishingOnboarding, setFinishingOnboarding] = useState(false)
+  const [onboardingError, setOnboardingError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     const [nextSnapshot, nextSettings] = await Promise.all([
@@ -77,7 +81,7 @@ export default function App() {
     }
   }
 
-  async function switchSurface(next: typeof surface) {
+  async function switchSurface(next: Surface) {
     setSurface(next)
     await invoke('set_surface', { surface: next })
   }
@@ -90,25 +94,47 @@ export default function App() {
   }
 
   async function finishOnboarding() {
-    if (!settings) return
-    const saved = await invoke<AppSettings>('save_settings', {
-      settings: { ...settings, firstRunComplete: true },
-    })
-    setSettings(saved)
-    await refreshNow()
-    await switchSurface('compact')
+    if (!settings || finishingOnboarding) return
+    setFinishingOnboarding(true)
+    setOnboardingError(null)
+    try {
+      const saved = await invoke<AppSettings>('save_settings', {
+        settings: { ...settings, firstRunComplete: true },
+      })
+      setSettings(saved)
+      await refreshNow()
+      await switchSurface('compact')
+    } catch {
+      setOnboardingError('Unable to finish setup. Please try again.')
+    } finally {
+      setFinishingOnboarding(false)
+    }
+  }
+
+  async function startDragging(event: PointerEvent<HTMLElement>) {
+    if (event.button !== 0) return
+    try {
+      await getCurrentWindow().startDragging()
+    } catch {
+      // The window may be unavailable while the app is shutting down.
+    }
   }
 
   if (!settings) return <div className="loading-shell" />
 
   return (
     <main className={`app-shell surface-${surface}`}>
-      <div className="drag-rail" data-tauri-drag-region />
+      {surface !== 'compact' && (
+        <div className="drag-rail" onPointerDown={(event) => void startDragging(event)} />
+      )}
       {surface === 'compact' && (
         <CompactView
           providers={providers}
           showLongWindow={settings.showLongWindow}
+          refreshing={refreshing}
+          onDrag={startDragging}
           onOpen={() => void switchSurface('detail')}
+          onRefresh={() => void refreshNow()}
         />
       )}
       {surface === 'detail' && (
@@ -118,7 +144,7 @@ export default function App() {
           refreshing={refreshing}
           onRefresh={() => void refreshNow()}
           onSettings={() => void switchSurface('settings')}
-          onClose={() => void switchSurface('compact')}
+          onCompact={() => void switchSurface('compact')}
         />
       )}
       {surface === 'settings' && (
@@ -134,7 +160,9 @@ export default function App() {
           providers={providers}
           refreshing={refreshing}
           onRefresh={() => void refreshNow()}
-          onContinue={() => void finishOnboarding()}
+          finishing={finishingOnboarding}
+          error={onboardingError}
+          onContinue={finishOnboarding}
         />
       )}
     </main>
@@ -144,35 +172,77 @@ export default function App() {
 function CompactView({
   providers,
   showLongWindow,
+  refreshing,
+  onDrag,
   onOpen,
+  onRefresh,
 }: {
   providers: ProviderUsage[]
   showLongWindow: boolean
+  refreshing: boolean
+  onDrag: (event: PointerEvent<HTMLElement>) => Promise<void>
   onOpen: () => void
+  onRefresh: () => void
 }) {
   return (
-    <button className="compact-view" onClick={onOpen} aria-label="Open usage details">
-      {providers.map((provider, index) => (
-        <div className="compact-provider" key={provider.provider} title={statusLabel(provider)}>
-          <span className="provider-logo">
-            <ProviderLogo provider={provider.provider} size={19} />
-          </span>
-          <div className="compact-values">
-            {compactWindows(provider, showLongWindow).map((window, windowIndex) => (
-              <span
-                key={`${provider.provider}-${window.id}`}
-                className={`quota quota-${quotaTone(window.remainingPercent)}`}
-              >
-                {windowIndex > 0 && <span className="value-dot">·</span>}
-                {percentage(window.remainingPercent)}
+    <section
+      className="compact-view"
+      aria-label="Compact usage widget"
+      onPointerDown={(event) => void onDrag(event)}
+    >
+      <div className="compact-summary">
+        {providers.map((provider, index) => (
+          <Fragment key={provider.provider}>
+            <div className="compact-provider" title={statusLabel(provider)}>
+              <span className="provider-logo">
+                <ProviderLogo
+                  provider={provider.provider}
+                  size={provider.provider === 'openai' ? 13 : 14}
+                />
               </span>
-            ))}
-          </div>
-          {provider.status === 'stale' && <span className="stale-dot" aria-label="Stale data" />}
-          {index === 0 && <span className="provider-divider" />}
-        </div>
-      ))}
-    </button>
+              <div className="compact-values">
+                {compactWindows(provider, showLongWindow).map((window) => (
+                  <span
+                    key={`${provider.provider}-${window.id}`}
+                    className={`quota quota-${quotaTone(window.remainingPercent)}`}
+                  >
+                    {percentage(window.remainingPercent)}
+                  </span>
+                ))}
+              </div>
+            </div>
+            {index === 0 && <span className="provider-divider" aria-hidden="true" />}
+          </Fragment>
+        ))}
+      </div>
+      <div className="compact-actions">
+        <button
+          className="compact-action"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation()
+            onRefresh()
+          }}
+          disabled={refreshing}
+          title="Refresh usage"
+          aria-label="Refresh usage"
+        >
+          {refreshing ? '…' : '↻'}
+        </button>
+        <button
+          className="compact-action"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation()
+            onOpen()
+          }}
+          title="Expand usage details"
+          aria-label="Expand usage details"
+        >
+          +
+        </button>
+      </div>
+    </section>
   )
 }
 
@@ -182,14 +252,14 @@ function DetailView({
   refreshing,
   onRefresh,
   onSettings,
-  onClose,
+  onCompact,
 }: {
   providers: ProviderUsage[]
   settings: AppSettings
   refreshing: boolean
   onRefresh: () => void
   onSettings: () => void
-  onClose: () => void
+  onCompact: () => void
 }) {
   return (
     <section className="detail-view">
@@ -207,7 +277,7 @@ function DetailView({
           <button className="icon-button" onClick={onSettings} title="Settings">
             ⚙
           </button>
-          <button className="icon-button" onClick={onClose} title="Compact mode">
+          <button className="icon-button" onClick={onCompact} title="Compact widget">
             —
           </button>
         </div>
@@ -385,12 +455,16 @@ function Onboarding({
   providers,
   refreshing,
   onRefresh,
+  finishing,
+  error,
   onContinue,
 }: {
   providers: ProviderUsage[]
   refreshing: boolean
   onRefresh: () => void
-  onContinue: () => void
+  finishing: boolean
+  error: string | null
+  onContinue: () => Promise<void>
 }) {
   return (
     <section className="onboarding-view">
@@ -419,10 +493,15 @@ function Onboarding({
         <button className="secondary-button" onClick={onRefresh} disabled={refreshing}>
           {refreshing ? 'Checking…' : 'Check again'}
         </button>
-        <button className="primary-button" onClick={onContinue}>
-          Continue
+        <button className="primary-button" onClick={() => void onContinue()} disabled={finishing}>
+          {finishing ? 'Finishing…' : 'Continue'}
         </button>
       </div>
+      {error && (
+        <p className="onboarding-error" role="status">
+          {error}
+        </p>
+      )}
     </section>
   )
 }
