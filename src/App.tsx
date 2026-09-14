@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { type PointerEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment } from 'react'
 import { ProviderLogo } from './components/ProviderLogo'
 import {
   compactWindows,
@@ -191,25 +192,27 @@ function CompactView({
     >
       <div className="compact-summary">
         {providers.map((provider, index) => (
-          <div className="compact-provider" key={provider.provider} title={statusLabel(provider)}>
-            <span className="provider-logo">
-              <ProviderLogo
-                provider={provider.provider}
-                size={provider.provider === 'openai' ? 13 : 14}
-              />
-            </span>
-            <div className="compact-values">
-              {compactWindows(provider, showLongWindow).map((window) => (
-                <span
-                  key={`${provider.provider}-${window.id}`}
-                  className={`quota quota-${quotaTone(window.remainingPercent)}`}
-                >
-                  {percentage(window.remainingPercent)}
-                </span>
-              ))}
+          <Fragment key={provider.provider}>
+            <div className="compact-provider" title={statusLabel(provider)}>
+              <span className="provider-logo">
+                <ProviderLogo
+                  provider={provider.provider}
+                  size={provider.provider === 'openai' ? 13 : 14}
+                />
+              </span>
+              <div className="compact-values">
+                {compactWindows(provider, showLongWindow).map((window) => (
+                  <span
+                    key={`${provider.provider}-${window.id}`}
+                    className={`quota quota-${quotaTone(window.remainingPercent)}`}
+                  >
+                    {percentage(window.remainingPercent)}
+                  </span>
+                ))}
+              </div>
             </div>
-            {index === 0 && <span className="provider-divider" />}
-          </div>
+            {index === 0 && <span className="provider-divider" aria-hidden="true" />}
+          </Fragment>
         ))}
       </div>
       <div className="compact-actions">

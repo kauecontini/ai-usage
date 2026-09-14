@@ -8,6 +8,11 @@ use crate::core::{
     types::{ProviderId, ProviderStatus, UsageSnapshot},
 };
 use chrono::Utc;
+#[cfg(windows)]
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    OnceLock,
+};
 use std::{
     collections::{HashMap, HashSet},
     fs::OpenOptions,
@@ -51,6 +56,28 @@ impl SharedState {
             openai_poll: Arc::new(Mutex::new(ProviderPoll::default())),
             anthropic_poll: Arc::new(Mutex::new(ProviderPoll::default())),
             window_runtime: Arc::new(Mutex::new(WindowRuntime::default())),
+        }
+    }
+}
+
+#[cfg(windows)]
+static FOREGROUND_APP: OnceLock<AppHandle> = OnceLock::new();
+
+#[cfg(windows)]
+static FOREGROUND_RAISE_PENDING: AtomicBool = AtomicBool::new(false);
+
+#[cfg(windows)]
+struct ForegroundHook {
+    handle: usize,
+}
+
+#[cfg(windows)]
+impl Drop for ForegroundHook {
+    fn drop(&mut self) {
+        if self.handle != 0 {
+            unsafe {
+                windows_sys::Win32::UI::Accessibility::UnhookWinEvent(self.handle as _);
+            }
         }
     }
 }
@@ -415,8 +442,36 @@ fn apply_runtime_settings(
     Ok(())
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum TopmostAction {
+    Remove,
+    EnableAndRaise,
+}
+
+fn topmost_action(enabled: bool) -> TopmostAction {
+    if enabled {
+        TopmostAction::EnableAndRaise
+    } else {
+        TopmostAction::Remove
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ForegroundAction {
+    Ignore,
+    Raise,
+}
+
+fn foreground_action(always_on_top: bool, visible: bool) -> ForegroundAction {
+    if always_on_top && visible {
+        ForegroundAction::Raise
+    } else {
+        ForegroundAction::Ignore
+    }
+}
+
 #[cfg(windows)]
-fn enforce_windows_topmost(window: &WebviewWindow, enabled: bool) -> Result<(), String> {
+fn set_topmost_state(window: &WebviewWindow, enabled: bool) -> Result<(), String> {
     use windows_sys::Win32::{
         Foundation::GetLastError,
         UI::WindowsAndMessaging::{
@@ -441,9 +496,117 @@ fn enforce_windows_topmost(window: &WebviewWindow, enabled: bool) -> Result<(), 
     Ok(())
 }
 
+#[cfg(windows)]
+fn raise_within_topmost_band(window: &WebviewWindow) -> Result<(), String> {
+    use windows_sys::Win32::{
+        Foundation::GetLastError,
+        UI::WindowsAndMessaging::{SetWindowPos, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE},
+    };
+
+    let hwnd = window
+        .hwnd()
+        .map_err(|_| "Unable to access the Usage window handle".to_string())?;
+    let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+    // HWND_TOP changes order within the existing topmost band without
+    // activating, moving, or resizing the widget.
+    if unsafe { SetWindowPos(hwnd.0 as _, HWND_TOP, 0, 0, 0, 0, flags) } == 0 {
+        let error = unsafe { GetLastError() };
+        return Err(format!("Unable to raise Usage in topmost order ({error})"));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn enforce_windows_topmost(window: &WebviewWindow, enabled: bool) -> Result<(), String> {
+    match topmost_action(enabled) {
+        TopmostAction::Remove => set_topmost_state(window, false),
+        TopmostAction::EnableAndRaise => {
+            set_topmost_state(window, true)?;
+            raise_within_topmost_band(window)
+        }
+    }
+}
+
 #[cfg(not(windows))]
 fn enforce_windows_topmost(_window: &WebviewWindow, _enabled: bool) -> Result<(), String> {
     Ok(())
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn foreground_event_proc(
+    _hook: windows_sys::Win32::UI::Accessibility::HWINEVENTHOOK,
+    event: u32,
+    _hwnd: windows_sys::Win32::Foundation::HWND,
+    _id_object: i32,
+    _id_child: i32,
+    _event_thread: u32,
+    _event_time: u32,
+) {
+    if event != windows_sys::Win32::UI::WindowsAndMessaging::EVENT_SYSTEM_FOREGROUND {
+        return;
+    }
+    if FOREGROUND_RAISE_PENDING.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let Some(app) = FOREGROUND_APP.get().cloned() else {
+        FOREGROUND_RAISE_PENDING.store(false, Ordering::Release);
+        return;
+    };
+    let callback_app = app.clone();
+    if app
+        .run_on_main_thread(move || {
+            FOREGROUND_RAISE_PENDING.store(false, Ordering::Release);
+            reassert_foreground_topmost(&callback_app);
+        })
+        .is_err()
+    {
+        FOREGROUND_RAISE_PENDING.store(false, Ordering::Release);
+    }
+}
+
+#[cfg(windows)]
+fn install_foreground_hook(app: &AppHandle) -> Result<ForegroundHook, String> {
+    FOREGROUND_APP
+        .set(app.clone())
+        .map_err(|_| "Foreground hook already installed".to_string())?;
+    let flags = windows_sys::Win32::UI::WindowsAndMessaging::WINEVENT_OUTOFCONTEXT
+        | windows_sys::Win32::UI::WindowsAndMessaging::WINEVENT_SKIPOWNPROCESS;
+    let handle = unsafe {
+        windows_sys::Win32::UI::Accessibility::SetWinEventHook(
+            windows_sys::Win32::UI::WindowsAndMessaging::EVENT_SYSTEM_FOREGROUND,
+            windows_sys::Win32::UI::WindowsAndMessaging::EVENT_SYSTEM_FOREGROUND,
+            std::ptr::null_mut(),
+            Some(foreground_event_proc),
+            0,
+            0,
+            flags,
+        )
+    };
+    if handle.is_null() {
+        let error = unsafe { windows_sys::Win32::Foundation::GetLastError() };
+        return Err(format!("Unable to install foreground hook ({error})"));
+    }
+    Ok(ForegroundHook {
+        handle: handle as usize,
+    })
+}
+
+#[cfg(windows)]
+fn reassert_foreground_topmost(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let always_on_top = app
+        .state::<SharedState>()
+        .settings
+        .read()
+        .map(|settings| settings.always_on_top)
+        .unwrap_or(false);
+    if foreground_action(always_on_top, window.is_visible().unwrap_or(false))
+        == ForegroundAction::Raise
+    {
+        let _ = raise_within_topmost_band(&window);
+    }
 }
 
 fn autostart_change(current: &AppSettings, updated: &AppSettings) -> Option<bool> {
@@ -804,6 +967,8 @@ pub fn run() {
         .manage(state.clone())
         .setup(move |app| {
             setup_tray(app)?;
+            #[cfg(windows)]
+            app.manage(install_foreground_hook(app.handle()).map_err(std::io::Error::other)?);
             if let Some(window) = app.get_webview_window("main") {
                 window.set_always_on_top(initial_settings.always_on_top)?;
                 enforce_windows_topmost(&window, initial_settings.always_on_top)
@@ -1339,5 +1504,18 @@ mod tests {
         abort_surface_transition(&mut failed, "compact");
         assert_eq!(failed.current_surface, "compact");
         assert_eq!(failed.programmatic_position, None);
+    }
+
+    #[test]
+    fn foreground_event_only_requests_raise_when_enabled_and_visible() {
+        assert_eq!(foreground_action(false, true), ForegroundAction::Ignore);
+        assert_eq!(foreground_action(true, false), ForegroundAction::Ignore);
+        assert_eq!(foreground_action(true, true), ForegroundAction::Raise);
+    }
+
+    #[test]
+    fn topmost_toggle_keeps_enable_and_raise_separate_from_remove() {
+        assert_eq!(topmost_action(false), TopmostAction::Remove);
+        assert_eq!(topmost_action(true), TopmostAction::EnableAndRaise);
     }
 }
