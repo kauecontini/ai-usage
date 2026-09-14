@@ -171,6 +171,9 @@ fn set_surface(window: WebviewWindow, surface: String) -> Result<(), String> {
         runtime.compact_anchor = Some(before_rect);
     }
     let compact_anchor = runtime.compact_anchor;
+    // Ignore every Moved event emitted by the resize itself. The final position
+    // is recorded below and is likewise identified as programmatic.
+    runtime.current_surface = "transition".into();
 
     window
         .set_size(tauri::LogicalSize::new(width, height))
