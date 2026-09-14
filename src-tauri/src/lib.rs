@@ -31,6 +31,7 @@ struct SharedState {
     notifications: Arc<Mutex<HashMap<String, HashSet<u8>>>>,
     openai_poll: Arc<Mutex<ProviderPoll>>,
     anthropic_poll: Arc<Mutex<ProviderPoll>>,
+    window_runtime: Arc<Mutex<WindowRuntime>>,
 }
 
 impl SharedState {
@@ -49,6 +50,7 @@ impl SharedState {
             notifications: Arc::new(Mutex::new(HashMap::new())),
             openai_poll: Arc::new(Mutex::new(ProviderPoll::default())),
             anthropic_poll: Arc::new(Mutex::new(ProviderPoll::default())),
+            window_runtime: Arc::new(Mutex::new(WindowRuntime::default())),
         }
     }
 }
@@ -122,17 +124,10 @@ fn save_settings(
         .clone();
     let mut validated = settings.validate();
 
-    // Window coordinates are runtime-owned state. Capture the actual current position
-    // instead of trusting potentially stale coordinates sent back by the webview.
-    if let Some(window) = app.get_webview_window("main") {
-        if let Ok(position) = window.outer_position() {
-            validated.widget_x = Some(position.x);
-            validated.widget_y = Some(position.y);
-        }
-    } else {
-        validated.widget_x = current.widget_x;
-        validated.widget_y = current.widget_y;
-    }
+    // Detail and settings surfaces can move temporarily. Persist the compact
+    // anchor only, never the current surface's transient position.
+    validated.widget_x = current.widget_x;
+    validated.widget_y = current.widget_y;
 
     apply_runtime_settings(&app, &current, &validated)?;
     settings::save(&state.paths.settings, &validated)
@@ -163,24 +158,63 @@ fn set_surface(window: WebviewWindow, surface: String) -> Result<(), String> {
                     work_area_rect(&monitor),
                 )
             })
-        });
+        })
+        .ok_or_else(|| "Unable to read Usage window position".to_string())?;
+
+    let state = window.state::<SharedState>();
+    let mut runtime = state
+        .window_runtime
+        .lock()
+        .map_err(|_| "Window state unavailable".to_string())?;
+    let (before_rect, work_area) = before;
+    if runtime.current_surface == "compact" && surface != "compact" {
+        runtime.compact_anchor = Some(before_rect);
+    }
+    let compact_anchor = runtime.compact_anchor;
 
     window
         .set_size(tauri::LogicalSize::new(width, height))
         .map_err(|_| "Unable to resize Usage".to_string())?;
-
-    if let Some((before, work_area)) = before {
-        if let Ok(size) = window.outer_size() {
-            let after = resized_window_rect(
-                before,
+    let size = window
+        .outer_size()
+        .map_err(|_| "Unable to read resized Usage window".to_string())?;
+    let target = if surface == "compact" {
+        compact_anchor.unwrap_or_else(|| {
+            resized_window_rect(
+                before_rect,
                 i32::try_from(size.width).unwrap_or(i32::MAX),
                 i32::try_from(size.height).unwrap_or(i32::MAX),
                 work_area,
-            );
-            let _ = window.set_position(PhysicalPosition::new(after.x, after.y));
-        }
-    }
+            )
+        })
+    } else {
+        resized_window_rect(
+            before_rect,
+            i32::try_from(size.width).unwrap_or(i32::MAX),
+            i32::try_from(size.height).unwrap_or(i32::MAX),
+            work_area,
+        )
+    };
+
+    runtime.current_surface = surface;
+    runtime.programmatic_position = Some((target.x, target.y));
+    window
+        .set_position(PhysicalPosition::new(target.x, target.y))
+        .map_err(|_| "Unable to position Usage".to_string())?;
+    let always_on_top = state
+        .settings
+        .read()
+        .map_err(|_| "Settings unavailable".to_string())?
+        .always_on_top;
+    enforce_windows_topmost(&window, always_on_top)?;
     Ok(())
+}
+
+#[derive(Debug, Default)]
+struct WindowRuntime {
+    current_surface: String,
+    compact_anchor: Option<WindowRect>,
+    programmatic_position: Option<(i32, i32)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -207,21 +241,22 @@ fn resized_window_rect(
     height: i32,
     work_area: WindowRect,
 ) -> WindowRect {
-    const ANCHOR_TOLERANCE: i32 = 24;
     let right_edge = work_area.x.saturating_add(work_area.width);
     let bottom_edge = work_area.y.saturating_add(work_area.height);
-    let right_margin = right_edge.saturating_sub(before.x.saturating_add(before.width));
-    let bottom_margin = bottom_edge.saturating_sub(before.y.saturating_add(before.height));
-    let anchored_right = (0..=ANCHOR_TOLERANCE).contains(&right_margin);
-    let anchored_bottom = (0..=ANCHOR_TOLERANCE).contains(&bottom_margin);
-    let x = if anchored_right {
+    let before_center_x = before.x.saturating_add(before.width / 2);
+    let before_center_y = before.y.saturating_add(before.height / 2);
+    let area_center_x = work_area.x.saturating_add(work_area.width / 2);
+    let area_center_y = work_area.y.saturating_add(work_area.height / 2);
+    let x = if before_center_x >= area_center_x {
+        let right_margin = right_edge.saturating_sub(before.x.saturating_add(before.width));
         right_edge
             .saturating_sub(width)
             .saturating_sub(right_margin)
     } else {
         before.x
     };
-    let y = if anchored_bottom {
+    let y = if before_center_y >= area_center_y {
+        let bottom_margin = bottom_edge.saturating_sub(before.y.saturating_add(before.height));
         bottom_edge
             .saturating_sub(height)
             .saturating_sub(bottom_margin)
@@ -243,7 +278,7 @@ fn clamp_window_axis(origin: i32, size: i32, area_origin: i32, area_size: i32) -
 
 fn surface_size(surface: &str) -> Result<(f64, f64), String> {
     match surface {
-        "compact" => Ok((276.0, 44.0)),
+        "compact" => Ok((240.0, 36.0)),
         "detail" => Ok((366.0, 344.0)),
         "settings" => Ok((366.0, 408.0)),
         "onboarding" => Ok((366.0, 246.0)),
@@ -261,6 +296,7 @@ fn apply_runtime_settings(
             window
                 .set_always_on_top(updated.always_on_top)
                 .map_err(|_| "Unable to change always-on-top".to_string())?;
+            enforce_windows_topmost(&window, updated.always_on_top)?;
         }
     }
 
@@ -281,6 +317,37 @@ fn apply_runtime_settings(
             }
         }
     }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn enforce_windows_topmost(window: &WebviewWindow, enabled: bool) -> Result<(), String> {
+    use windows_sys::Win32::{
+        Foundation::GetLastError,
+        UI::WindowsAndMessaging::{
+            SetWindowPos, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        },
+    };
+
+    let hwnd = window
+        .hwnd()
+        .map_err(|_| "Unable to access the Usage window handle".to_string())?;
+    let insert_after = if enabled {
+        HWND_TOPMOST
+    } else {
+        HWND_NOTOPMOST
+    };
+    let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+    // This explicitly changes the Windows z-order without activating the widget.
+    if unsafe { SetWindowPos(hwnd.0 as _, insert_after, 0, 0, 0, 0, flags) } == 0 {
+        let error = unsafe { GetLastError() };
+        return Err(format!("Unable to update Windows topmost state ({error})"));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn enforce_windows_topmost(_window: &WebviewWindow, _enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
@@ -488,6 +555,14 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                 if let Some(window) = tray.app_handle().get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
+                    let always_on_top = tray
+                        .app_handle()
+                        .state::<SharedState>()
+                        .settings
+                        .read()
+                        .map(|settings| settings.always_on_top)
+                        .unwrap_or(false);
+                    let _ = enforce_windows_topmost(&window, always_on_top);
                 }
             }
         })
@@ -496,6 +571,13 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.show();
                     let _ = w.set_focus();
+                    let always_on_top = app
+                        .state::<SharedState>()
+                        .settings
+                        .read()
+                        .map(|settings| settings.always_on_top)
+                        .unwrap_or(false);
+                    let _ = enforce_windows_topmost(&w, always_on_top);
                 }
             }
             "hide" => {
@@ -576,8 +658,8 @@ fn place_near_system_tray(window: &WebviewWindow, size: &tauri::PhysicalSize<u32
             .y
             .saturating_add(i32::try_from(area.size.height).unwrap_or(i32::MAX));
         let _ = window.set_position(PhysicalPosition::new(
-            right.saturating_sub(width).saturating_sub(12),
-            bottom.saturating_sub(height).saturating_sub(12),
+            right.saturating_sub(width).saturating_sub(8),
+            bottom.saturating_sub(height).saturating_sub(8),
         ));
     }
 }
@@ -629,31 +711,58 @@ pub fn run() {
             setup_tray(app)?;
             if let Some(window) = app.get_webview_window("main") {
                 window.set_always_on_top(initial_settings.always_on_top)?;
+                enforce_windows_topmost(&window, initial_settings.always_on_top)
+                    .map_err(std::io::Error::other)?;
                 restore_position(&window, &initial_settings);
+                if let (Ok(position), Ok(size), Ok(mut runtime)) = (
+                    window.outer_position(),
+                    window.outer_size(),
+                    state.window_runtime.lock(),
+                ) {
+                    runtime.current_surface = "compact".into();
+                    runtime.compact_anchor = Some(WindowRect {
+                        x: position.x,
+                        y: position.y,
+                        width: i32::try_from(size.width).unwrap_or(i32::MAX),
+                        height: i32::try_from(size.height).unwrap_or(i32::MAX),
+                    });
+                }
             }
             start_scheduler(app.handle().clone(), state.clone());
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Focused(false) = event {
-                let keep_on_top = window
-                    .state::<SharedState>()
-                    .settings
-                    .read()
-                    .map(|settings| settings.always_on_top)
-                    .unwrap_or(false);
-                if keep_on_top {
-                    let _ = window.set_always_on_top(true);
-                }
-            }
             if let tauri::WindowEvent::Moved(position) = event {
                 let state = window.state::<SharedState>();
                 let settings_path = state.paths.settings.clone();
-                let write_result = state.settings.write();
-                if let Ok(mut current) = write_result {
-                    current.widget_x = Some(position.x);
-                    current.widget_y = Some(position.y);
-                    let _ = settings::save(&settings_path, &current);
+                let is_programmatic = state
+                    .window_runtime
+                    .lock()
+                    .map(|mut runtime| {
+                        if runtime.current_surface != "compact" {
+                            return true;
+                        }
+                        if runtime.programmatic_position == Some((position.x, position.y)) {
+                            runtime.programmatic_position = None;
+                            return true;
+                        }
+                        if let Ok(size) = window.outer_size() {
+                            runtime.compact_anchor = Some(WindowRect {
+                                x: position.x,
+                                y: position.y,
+                                width: i32::try_from(size.width).unwrap_or(i32::MAX),
+                                height: i32::try_from(size.height).unwrap_or(i32::MAX),
+                            });
+                        }
+                        false
+                    })
+                    .unwrap_or(true);
+                if !is_programmatic {
+                    if let Ok(mut current) = state.settings.write() {
+                        current.widget_x = Some(position.x);
+                        current.widget_y = Some(position.y);
+                        let _ = settings::save(&settings_path, &current);
+                    }
                 }
             }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -736,7 +845,7 @@ mod tests {
 
     #[test]
     fn compact_surface_uses_taskbar_friendly_size() {
-        assert_eq!(surface_size("compact"), Ok((276.0, 44.0)));
+        assert_eq!(surface_size("compact"), Ok((240.0, 36.0)));
     }
 
     #[test]
@@ -748,16 +857,16 @@ mod tests {
             height: 1040,
         };
         let compact = WindowRect {
-            x: 1632,
+            x: 1672,
             y: 996,
-            width: 276,
-            height: 44,
+            width: 240,
+            height: 36,
         };
         assert_eq!(
             resized_window_rect(compact, 366, 344, work_area),
             WindowRect {
-                x: 1542,
-                y: 696,
+                x: 1546,
+                y: 688,
                 width: 366,
                 height: 344,
             }
@@ -765,13 +874,13 @@ mod tests {
         assert_eq!(
             resized_window_rect(
                 WindowRect {
-                    x: 1542,
-                    y: 696,
+                    x: 1546,
+                    y: 688,
                     width: 366,
                     height: 344,
                 },
-                276,
-                44,
+                240,
+                36,
                 work_area,
             ),
             compact
@@ -789,8 +898,8 @@ mod tests {
         let centered = WindowRect {
             x: 700,
             y: 300,
-            width: 276,
-            height: 44,
+            width: 240,
+            height: 36,
         };
         assert_eq!(
             resized_window_rect(centered, 366, 344, work_area),
@@ -841,10 +950,10 @@ mod tests {
             height: 1040,
         };
         let compact = WindowRect {
-            x: -276,
-            y: 956,
-            width: 276,
-            height: 44,
+            x: -240,
+            y: 964,
+            width: 240,
+            height: 36,
         };
         assert_eq!(
             resized_window_rect(compact, 366, 344, work_area),
@@ -855,5 +964,107 @@ mod tests {
                 height: 344,
             }
         );
+    }
+
+    #[test]
+    fn every_work_area_quadrant_selects_a_deterministic_growth_direction() {
+        let work_area = WindowRect {
+            x: 100,
+            y: 50,
+            width: 1000,
+            height: 800,
+        };
+        let compact_size = (240, 36);
+        let detail_size = (366, 344);
+        let cases = [
+            (
+                WindowRect {
+                    x: 120,
+                    y: 70,
+                    width: compact_size.0,
+                    height: compact_size.1,
+                },
+                (120, 70),
+            ),
+            (
+                WindowRect {
+                    x: 840,
+                    y: 70,
+                    width: compact_size.0,
+                    height: compact_size.1,
+                },
+                (714, 70),
+            ),
+            (
+                WindowRect {
+                    x: 120,
+                    y: 794,
+                    width: compact_size.0,
+                    height: compact_size.1,
+                },
+                (120, 486),
+            ),
+            (
+                WindowRect {
+                    x: 840,
+                    y: 794,
+                    width: compact_size.0,
+                    height: compact_size.1,
+                },
+                (714, 486),
+            ),
+        ];
+
+        for (compact, expected_origin) in cases {
+            let detail = resized_window_rect(compact, detail_size.0, detail_size.1, work_area);
+            assert_eq!((detail.x, detail.y), expected_origin);
+        }
+    }
+
+    #[test]
+    fn center_halves_choose_down_or_up_without_edge_heuristics() {
+        let work_area = WindowRect {
+            x: 0,
+            y: 0,
+            width: 1000,
+            height: 800,
+        };
+        let upper = WindowRect {
+            x: 450,
+            y: 250,
+            width: 240,
+            height: 36,
+        };
+        let lower = WindowRect {
+            x: 450,
+            y: 550,
+            width: 240,
+            height: 36,
+        };
+        assert_eq!(resized_window_rect(upper, 366, 344, work_area).y, 250);
+        assert_eq!(resized_window_rect(lower, 366, 344, work_area).y, 242);
+    }
+
+    #[test]
+    fn saved_compact_anchor_survives_programmatic_surface_positions() {
+        let anchor = WindowRect {
+            x: -900,
+            y: 300,
+            width: 240,
+            height: 36,
+        };
+        let detail = WindowRect {
+            x: -900,
+            y: 0,
+            width: 366,
+            height: 344,
+        };
+        let runtime = WindowRuntime {
+            current_surface: "detail".into(),
+            compact_anchor: Some(anchor),
+            programmatic_position: Some((detail.x, detail.y)),
+        };
+        assert_eq!(runtime.compact_anchor, Some(anchor));
+        assert_ne!(runtime.compact_anchor, Some(detail));
     }
 }

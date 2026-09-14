@@ -1,30 +1,17 @@
 import type { ProviderId } from '../types'
+import claudeLogo from '../assets/providers/claude-white.png'
 
 export function ProviderLogo({ provider, size = 20 }: { provider: ProviderId; size?: number }) {
   if (provider === 'anthropic') {
     return (
-      <svg
+      <img
         aria-label="Claude"
         role="img"
-        viewBox="0 0 24 24"
+        alt="Claude"
+        src={claudeLogo}
         width={size}
         height={size}
-        fill="#d97757"
-      >
-        <g transform="translate(12 12)">
-          {Array.from({ length: 16 }, (_, index) => (
-            <rect
-              key={index}
-              x="-1.25"
-              y="-10.5"
-              width="2.5"
-              height="7.2"
-              rx="1.25"
-              transform={`rotate(${index * 22.5})`}
-            />
-          ))}
-        </g>
-      </svg>
+      />
     )
   }
 

@@ -110,7 +110,7 @@ export default function App() {
     }
   }
 
-  async function startDragging(event: PointerEvent<HTMLDivElement>) {
+  async function startDragging(event: PointerEvent<HTMLElement>) {
     if (event.button !== 0) return
     try {
       await getCurrentWindow().startDragging()
@@ -123,12 +123,15 @@ export default function App() {
 
   return (
     <main className={`app-shell surface-${surface}`}>
-      <div className="drag-rail" onPointerDown={(event) => void startDragging(event)} />
+      {surface !== 'compact' && (
+        <div className="drag-rail" onPointerDown={(event) => void startDragging(event)} />
+      )}
       {surface === 'compact' && (
         <CompactView
           providers={providers}
           showLongWindow={settings.showLongWindow}
           refreshing={refreshing}
+          onDrag={startDragging}
           onOpen={() => void switchSurface('detail')}
           onRefresh={() => void refreshNow()}
         />
@@ -169,29 +172,30 @@ function CompactView({
   providers,
   showLongWindow,
   refreshing,
+  onDrag,
   onOpen,
   onRefresh,
 }: {
   providers: ProviderUsage[]
   showLongWindow: boolean
   refreshing: boolean
+  onDrag: (event: PointerEvent<HTMLElement>) => Promise<void>
   onOpen: () => void
   onRefresh: () => void
 }) {
   return (
-    <section className="compact-view" aria-label="Compact usage widget">
-      <button
-        className="compact-summary"
-        onClick={onOpen}
-        onPointerDown={() => void startWindowDragging()}
-        aria-label="Open usage details"
-      >
+    <section
+      className="compact-view"
+      aria-label="Compact usage widget"
+      onPointerDown={(event) => void onDrag(event)}
+    >
+      <div className="compact-summary">
         {providers.map((provider, index) => (
           <div className="compact-provider" key={provider.provider} title={statusLabel(provider)}>
             <span className="provider-logo">
               <ProviderLogo
                 provider={provider.provider}
-                size={provider.provider === 'openai' ? 14 : 16}
+                size={provider.provider === 'openai' ? 13 : 14}
               />
             </span>
             <div className="compact-values">
@@ -207,11 +211,15 @@ function CompactView({
             {index === 0 && <span className="provider-divider" />}
           </div>
         ))}
-      </button>
+      </div>
       <div className="compact-actions">
         <button
           className="compact-action"
-          onClick={onRefresh}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation()
+            onRefresh()
+          }}
           disabled={refreshing}
           title="Refresh usage"
           aria-label="Refresh usage"
@@ -220,7 +228,11 @@ function CompactView({
         </button>
         <button
           className="compact-action"
-          onClick={onOpen}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation()
+            onOpen()
+          }}
           title="Expand usage details"
           aria-label="Expand usage details"
         >
@@ -229,14 +241,6 @@ function CompactView({
       </div>
     </section>
   )
-}
-
-async function startWindowDragging() {
-  try {
-    await getCurrentWindow().startDragging()
-  } catch {
-    // The window may be unavailable while the app is shutting down.
-  }
 }
 
 function DetailView({
