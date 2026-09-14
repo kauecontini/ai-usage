@@ -146,16 +146,20 @@ fn save_settings(
 
 #[tauri::command]
 fn set_surface(window: WebviewWindow, surface: String) -> Result<(), String> {
-    let (width, height) = match surface.as_str() {
-        "compact" => (334.0, 60.0),
-        "detail" => (366.0, 344.0),
-        "settings" => (366.0, 408.0),
-        "onboarding" => (366.0, 246.0),
-        _ => return Err("Unknown surface".into()),
-    };
+    let (width, height) = surface_size(&surface)?;
     window
         .set_size(tauri::LogicalSize::new(width, height))
         .map_err(|_| "Unable to resize Usage".to_string())
+}
+
+fn surface_size(surface: &str) -> Result<(f64, f64), String> {
+    match surface {
+        "compact" => Ok((276.0, 44.0)),
+        "detail" => Ok((366.0, 344.0)),
+        "settings" => Ok((366.0, 408.0)),
+        "onboarding" => Ok((366.0, 246.0)),
+        _ => Err("Unknown surface".into()),
+    }
 }
 
 fn apply_runtime_settings(
@@ -434,10 +438,11 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 }
 
 fn restore_position(window: &WebviewWindow, settings: &AppSettings) {
-    let (Some(x), Some(y)) = (settings.widget_x, settings.widget_y) else {
+    let Ok(size) = window.outer_size() else {
         return;
     };
-    let Ok(size) = window.outer_size() else {
+    let (Some(x), Some(y)) = (settings.widget_x, settings.widget_y) else {
+        place_near_system_tray(window, &size);
         return;
     };
     let Ok(monitors) = window.available_monitors() else {
@@ -465,11 +470,25 @@ fn restore_position(window: &WebviewWindow, settings: &AppSettings) {
         }
     }
 
+    place_near_system_tray(window, &size);
+}
+
+fn place_near_system_tray(window: &WebviewWindow, size: &tauri::PhysicalSize<u32>) {
     if let Ok(Some(primary)) = window.primary_monitor() {
         let area = primary.work_area();
+        let width = i32::try_from(size.width).unwrap_or(i32::MAX);
+        let height = i32::try_from(size.height).unwrap_or(i32::MAX);
+        let right = area
+            .position
+            .x
+            .saturating_add(i32::try_from(area.size.width).unwrap_or(i32::MAX));
+        let bottom = area
+            .position
+            .y
+            .saturating_add(i32::try_from(area.size.height).unwrap_or(i32::MAX));
         let _ = window.set_position(PhysicalPosition::new(
-            area.position.x.saturating_add(16),
-            area.position.y.saturating_add(16),
+            right.saturating_sub(width).saturating_sub(12),
+            bottom.saturating_sub(height).saturating_sub(12),
         ));
     }
 }
@@ -520,7 +539,7 @@ pub fn run() {
         .setup(move |app| {
             setup_tray(app)?;
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_always_on_top(initial_settings.always_on_top);
+                window.set_always_on_top(initial_settings.always_on_top)?;
                 restore_position(&window, &initial_settings);
             }
             start_scheduler(app.handle().clone(), state.clone());
@@ -613,5 +632,10 @@ mod tests {
             ..current.clone()
         };
         assert_eq!(autostart_change(&current, &completed), None);
+    }
+
+    #[test]
+    fn compact_surface_uses_taskbar_friendly_size() {
+        assert_eq!(surface_size("compact"), Ok((276.0, 44.0)));
     }
 }

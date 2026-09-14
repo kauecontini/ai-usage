@@ -4,14 +4,26 @@ export function ProviderLogo({ provider, size = 20 }: { provider: ProviderId; si
   if (provider === 'anthropic') {
     return (
       <svg
-        aria-label="Anthropic"
+        aria-label="Claude"
         role="img"
         viewBox="0 0 24 24"
         width={size}
         height={size}
-        fill="currentColor"
+        fill="#d97757"
       >
-        <path d="M13.827 3.52h3.603L24 20h-3.603l-6.57-16.48zm-7.258 0h3.767L16.906 20h-3.674l-1.343-3.461H5.017l-1.344 3.46H0L6.57 3.522zm4.132 9.959L8.453 7.687 6.205 13.48H10.7z" />
+        <g transform="translate(12 12)">
+          <rect x="-1.45" y="-10.5" width="2.9" height="7.8" rx="1.45" />
+          <rect x="-1.45" y="2.7" width="2.9" height="7.8" rx="1.45" />
+          <rect x="-10.5" y="-1.45" width="7.8" height="2.9" rx="1.45" />
+          <rect x="2.7" y="-1.45" width="7.8" height="2.9" rx="1.45" />
+          <rect x="-1.45" y="-10.5" width="2.9" height="7.8" rx="1.45" transform="rotate(45)" />
+          <rect x="-1.45" y="-10.5" width="2.9" height="7.8" rx="1.45" transform="rotate(90)" />
+          <rect x="-1.45" y="-10.5" width="2.9" height="7.8" rx="1.45" transform="rotate(135)" />
+          <rect x="-1.45" y="-10.5" width="2.9" height="7.8" rx="1.45" transform="rotate(180)" />
+          <rect x="-1.45" y="-10.5" width="2.9" height="7.8" rx="1.45" transform="rotate(225)" />
+          <rect x="-1.45" y="-10.5" width="2.9" height="7.8" rx="1.45" transform="rotate(270)" />
+          <rect x="-1.45" y="-10.5" width="2.9" height="7.8" rx="1.45" transform="rotate(315)" />
+        </g>
       </svg>
     )
   }

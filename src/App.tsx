@@ -12,6 +12,8 @@ import {
 } from './lib/format'
 import type { AppSettings, ProviderId, ProviderUsage, UsageSnapshot } from './types'
 
+type Surface = 'compact' | 'detail' | 'settings' | 'onboarding'
+
 const EMPTY: UsageSnapshot = {
   providers: [emptyProvider('openai'), emptyProvider('anthropic')],
   refreshedAt: 0,
@@ -31,9 +33,7 @@ function emptyProvider(provider: ProviderId): ProviderUsage {
 export default function App() {
   const [snapshot, setSnapshot] = useState<UsageSnapshot>(EMPTY)
   const [settings, setSettings] = useState<AppSettings | null>(null)
-  const [surface, setSurface] = useState<'compact' | 'detail' | 'settings' | 'onboarding'>(
-    'compact',
-  )
+  const [surface, setSurface] = useState<Surface>('compact')
   const [refreshing, setRefreshing] = useState(false)
   const [finishingOnboarding, setFinishingOnboarding] = useState(false)
   const [onboardingError, setOnboardingError] = useState<string | null>(null)
@@ -80,7 +80,7 @@ export default function App() {
     }
   }
 
-  async function switchSurface(next: typeof surface) {
+  async function switchSurface(next: Surface) {
     setSurface(next)
     await invoke('set_surface', { surface: next })
   }
@@ -128,7 +128,9 @@ export default function App() {
         <CompactView
           providers={providers}
           showLongWindow={settings.showLongWindow}
+          refreshing={refreshing}
           onOpen={() => void switchSurface('detail')}
+          onRefresh={() => void refreshNow()}
         />
       )}
       {surface === 'detail' && (
@@ -138,7 +140,7 @@ export default function App() {
           refreshing={refreshing}
           onRefresh={() => void refreshNow()}
           onSettings={() => void switchSurface('settings')}
-          onClose={() => void switchSurface('compact')}
+          onCompact={() => void switchSurface('compact')}
         />
       )}
       {surface === 'settings' && (
@@ -166,35 +168,62 @@ export default function App() {
 function CompactView({
   providers,
   showLongWindow,
+  refreshing,
   onOpen,
+  onRefresh,
 }: {
   providers: ProviderUsage[]
   showLongWindow: boolean
+  refreshing: boolean
   onOpen: () => void
+  onRefresh: () => void
 }) {
   return (
-    <button className="compact-view" onClick={onOpen} aria-label="Open usage details">
-      {providers.map((provider, index) => (
-        <div className="compact-provider" key={provider.provider} title={statusLabel(provider)}>
-          <span className="provider-logo">
-            <ProviderLogo provider={provider.provider} size={19} />
-          </span>
-          <div className="compact-values">
-            {compactWindows(provider, showLongWindow).map((window, windowIndex) => (
-              <span
-                key={`${provider.provider}-${window.id}`}
-                className={`quota quota-${quotaTone(window.remainingPercent)}`}
-              >
-                {windowIndex > 0 && <span className="value-dot">·</span>}
-                {percentage(window.remainingPercent)}
-              </span>
-            ))}
+    <section className="compact-view" aria-label="Compact usage widget">
+      <button className="compact-summary" onClick={onOpen} aria-label="Open usage details">
+        {providers.map((provider, index) => (
+          <div className="compact-provider" key={provider.provider} title={statusLabel(provider)}>
+            <span className="provider-logo">
+              <ProviderLogo provider={provider.provider} size={16} />
+            </span>
+            <div className="compact-values">
+              {compactWindows(provider, showLongWindow).map((window, windowIndex) => (
+                <span
+                  key={`${provider.provider}-${window.id}`}
+                  className={`quota quota-${quotaTone(window.remainingPercent)}`}
+                >
+                  {windowIndex > 0 && <span className="value-dot">·</span>}
+                  {percentage(window.remainingPercent)}
+                </span>
+              ))}
+            </div>
+            {provider.status === 'stale' && (
+              <span className="stale-dot" aria-label="Stale data" />
+            )}
+            {index === 0 && <span className="provider-divider" />}
           </div>
-          {provider.status === 'stale' && <span className="stale-dot" aria-label="Stale data" />}
-          {index === 0 && <span className="provider-divider" />}
-        </div>
-      ))}
-    </button>
+        ))}
+      </button>
+      <div className="compact-actions">
+        <button
+          className="compact-action"
+          onClick={onRefresh}
+          disabled={refreshing}
+          title="Refresh usage"
+          aria-label="Refresh usage"
+        >
+          {refreshing ? '…' : '↻'}
+        </button>
+        <button
+          className="compact-action"
+          onClick={onOpen}
+          title="Expand usage details"
+          aria-label="Expand usage details"
+        >
+          ⌃
+        </button>
+      </div>
+    </section>
   )
 }
 
@@ -204,14 +233,14 @@ function DetailView({
   refreshing,
   onRefresh,
   onSettings,
-  onClose,
+  onCompact,
 }: {
   providers: ProviderUsage[]
   settings: AppSettings
   refreshing: boolean
   onRefresh: () => void
   onSettings: () => void
-  onClose: () => void
+  onCompact: () => void
 }) {
   return (
     <section className="detail-view">
@@ -229,7 +258,7 @@ function DetailView({
           <button className="icon-button" onClick={onSettings} title="Settings">
             ⚙
           </button>
-          <button className="icon-button" onClick={onClose} title="Compact mode">
+          <button className="icon-button" onClick={onCompact} title="Compact widget">
             —
           </button>
         </div>

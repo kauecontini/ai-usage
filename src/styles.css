@@ -54,9 +54,9 @@ button {
   height: 100%;
   background: linear-gradient(180deg, #111113 0%, #0c0c0e 100%);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 8px;
   overflow: hidden;
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.22);
 }
 .drag-rail {
   position: absolute;
@@ -64,7 +64,7 @@ button {
   top: 0;
   left: 0;
   right: 0;
-  height: 16px;
+  height: 14px;
   cursor: grab;
 }
 .drag-rail:active {
@@ -78,11 +78,22 @@ button {
 }
 
 .compact-view {
-  border: 0;
   margin: 0;
-  padding: 0 14px;
+  padding: 0 6px 0 8px;
   background: transparent;
   width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+.compact-summary {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  min-width: 0;
+  flex: 1;
   height: 100%;
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -90,7 +101,7 @@ button {
   cursor: pointer;
   outline: none;
 }
-.compact-view:focus-visible {
+.compact-summary:focus-visible {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
 }
 .compact-provider {
@@ -98,56 +109,88 @@ button {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  height: 36px;
+  gap: 6px;
+  height: 28px;
 }
 .compact-provider + .compact-provider {
-  padding-left: 15px;
+  padding-left: 10px;
 }
 .provider-logo {
   color: #e9e9eb;
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   display: grid;
   place-items: center;
-  flex: 0 0 20px;
+  flex: 0 0 16px;
 }
 .compact-values {
   display: flex;
   align-items: baseline;
   min-width: 0;
-  gap: 8px;
+  gap: 5px;
 }
 .quota {
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum';
 }
 .compact-values .quota {
-  min-width: 35px;
-  font-size: 13px;
-  font-weight: 560;
+  min-width: 29px;
+  font-size: 11.5px;
+  font-weight: 600;
   letter-spacing: -0.015em;
 }
 .value-dot {
   color: #4e4e55;
-  margin-right: 8px;
+  margin-right: 5px;
 }
 .provider-divider {
   position: absolute;
   right: 0;
-  top: 5px;
+  top: 3px;
   width: 1px;
-  height: 26px;
+  height: 22px;
   background: var(--border);
 }
 .stale-dot {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 5px;
+  right: 5px;
   width: 4px;
   height: 4px;
   border: 1px solid #777780;
   border-radius: 50%;
+}
+.compact-actions {
+  position: relative;
+  z-index: 21;
+  display: flex;
+  gap: 3px;
+  margin-left: 5px;
+}
+.compact-action {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background: #17171a;
+  color: #d6d6da;
+  font-size: 15px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+.compact-action:hover {
+  background: #222226;
+  border-color: rgba(255, 255, 255, 0.18);
+}
+.compact-action:active {
+  transform: scale(0.94);
+}
+.compact-action:disabled {
+  cursor: default;
+  color: #8b8b93;
 }
 .quota-warning {
   color: var(--warning);
